@@ -24,4 +24,9 @@ public class RetailerCatalogCountResponse
     /// Numero totale di URL prodotto contati.
     /// </summary>
     public int TotalProducts { get; set; }
+
+    /// <summary>
+    /// Stato di copertura del catalogo usato per il conteggio.
+    /// </summary>
+    public CatalogCoverageStatus CatalogCoverage { get; set; } = new();
 }

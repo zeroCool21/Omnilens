@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Xml.Linq;
 using Microsoft.Extensions.Options;
+using OmnilensScraping.Models;
 
 namespace OmnilensScraping.Scraping;
 
@@ -21,6 +22,16 @@ public class SitemapCatalogUrlSource : ICatalogUrlSource
     {
         return !string.IsNullOrWhiteSpace(definition.SitemapIndexUrl) &&
                definition.ProductSitemapMarkers.Count > 0;
+    }
+
+    public CatalogCoverageStatus DescribeCoverage(RetailerDefinition definition)
+    {
+        return new CatalogCoverageStatus
+        {
+            SourceKind = "PublicSitemap",
+            IsGuaranteedComplete = true,
+            Notes = "Catalogo letto dai product sitemap pubblici del retailer."
+        };
     }
 
     public async Task<IReadOnlyCollection<string>> GetSampleProductUrlsAsync(

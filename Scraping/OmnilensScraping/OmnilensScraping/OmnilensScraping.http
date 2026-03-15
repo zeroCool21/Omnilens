@@ -30,8 +30,9 @@ Accept: application/json
 
 ###
 
-# Amazon IT: se non esiste ancora una snapshot locale il backend prova a bootstrapparla automaticamente.
-POST {{OmnilensScraping_HostAddress}}/api/scraping/catalog/AmazonIt/bootstrap?force=true
+# Amazon IT: crawl discovery page pubblico ampio e salvataggio sitemap organizzato per categorie.
+# Per copertura realmente garantita al 100% configura anche una snapshot autorevole in AmazonCatalog.Authoritative*.
+POST {{OmnilensScraping_HostAddress}}/api/scraping/catalog/AmazonIt/bootstrap?force=true&take=500
 Accept: application/json
 
 ###

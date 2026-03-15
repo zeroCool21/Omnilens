@@ -117,6 +117,7 @@ public class ScrapingController : ControllerBase
         {
             var retailers = _scrapingCoordinator.GetRetailers();
             var retailerInfo = retailers.First(info => info.Retailer == retailer);
+            var coverage = _catalogDiscoveryService.GetCoverageStatus(retailer);
             var totalProducts = await _catalogDiscoveryService.CountProductUrlsAsync(retailer, cancellationToken);
             var productSitemaps = await _catalogDiscoveryService.CountProductSourcesAsync(retailer, cancellationToken);
 
@@ -125,7 +126,8 @@ public class ScrapingController : ControllerBase
                 Retailer = retailer,
                 SitemapIndexUrl = retailerInfo.SitemapIndexUrl,
                 ProductSitemaps = productSitemaps,
-                TotalProducts = totalProducts
+                TotalProducts = totalProducts,
+                CatalogCoverage = coverage
             });
         }
         catch (NotSupportedException exception)
@@ -169,6 +171,7 @@ public class ScrapingController : ControllerBase
 
         try
         {
+            var coverage = _catalogDiscoveryService.GetCoverageStatus(retailer);
             var sampleUrls = await _catalogDiscoveryService.GetSampleProductUrlsAsync(retailer, take, cancellationToken);
             var appliedMaxConcurrency = _parallelScrapingService.ResolveBatchConcurrency(maxConcurrency);
             var parsedProducts = await _parallelScrapingService.ScrapeManyAsync(
@@ -188,6 +191,7 @@ public class ScrapingController : ControllerBase
                 FailedCount = parsedProducts.Count(item => !item.Success),
                 RequestedMode = mode,
                 AppliedMaxConcurrency = appliedMaxConcurrency,
+                CatalogCoverage = coverage,
                 ElapsedMs = (long)Math.Round(stopwatch.Elapsed.TotalMilliseconds),
                 ElapsedSeconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 2),
                 ElapsedDisplay = FormatElapsed(stopwatch.Elapsed),
@@ -362,9 +366,12 @@ public class ScrapingController : ControllerBase
     /// </summary>
     /// <param name="retailer">Retailer per cui eseguire il bootstrap. Attualmente supportato solo AmazonIt.</param>
     /// <param name="force">Se true rigenera i file bootstrap locali rimuovendo quelli precedenti.</param>
+    /// <param name="take">Numero massimo di prodotti da salvare nella snapshot. Se 0 non applica limiti.</param>
     /// <param name="cancellationToken">Token per annullare la richiesta lato server.</param>
     /// <remarks>
-    /// Per Amazon IT il bootstrap usa il sito pubblico per scoprire URL prodotto e salva sitemap XML locali riusabili dagli endpoint catalogo.
+    /// Per Amazon IT il bootstrap esplora il grafo pubblico di discovery page del sito, non solo le classifiche bestseller,
+    /// e salva sitemap XML locali organizzati per categorie riusabili dagli endpoint catalogo.
+    /// La copertura totale al 100% resta garantibile solo quando il backend legge una snapshot autorevole completa.
     /// </remarks>
     /// <response code="200">Bootstrap completato.</response>
     /// <response code="400">Retailer non supportato o richiesta non valida.</response>
@@ -372,6 +379,7 @@ public class ScrapingController : ControllerBase
     public async Task<ActionResult<AmazonCatalogBootstrapResponse>> BootstrapCatalog(
         RetailerType retailer,
         [FromQuery] bool force = false,
+        [FromQuery] int take = 0,
         CancellationToken cancellationToken = default)
     {
         if (retailer != RetailerType.AmazonIt)
@@ -379,7 +387,12 @@ public class ScrapingController : ControllerBase
             return BadRequest("Il bootstrap automatico del catalogo e attualmente disponibile solo per AmazonIt.");
         }
 
-        var response = await _amazonCatalogBootstrapService.BootstrapAsync(force, cancellationToken);
+        if (take < 0)
+        {
+            return BadRequest("Il parametro take deve essere maggiore o uguale a 0.");
+        }
+
+        var response = await _amazonCatalogBootstrapService.BootstrapAsync(force, take, cancellationToken);
         return Ok(response);
     }
 

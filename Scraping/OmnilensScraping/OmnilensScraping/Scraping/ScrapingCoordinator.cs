@@ -7,11 +7,16 @@ public class ScrapingCoordinator
 {
     private readonly IEnumerable<IRetailerScraper> _scrapers;
     private readonly RetailerRegistry _retailerRegistry;
+    private readonly CatalogDiscoveryService _catalogDiscoveryService;
 
-    public ScrapingCoordinator(IEnumerable<IRetailerScraper> scrapers, RetailerRegistry retailerRegistry)
+    public ScrapingCoordinator(
+        IEnumerable<IRetailerScraper> scrapers,
+        RetailerRegistry retailerRegistry,
+        CatalogDiscoveryService catalogDiscoveryService)
     {
         _scrapers = scrapers;
         _retailerRegistry = retailerRegistry;
+        _catalogDiscoveryService = catalogDiscoveryService;
     }
 
     public async Task<ScrapeProductResponse> ScrapeAsync(ScrapeProductRequest request, CancellationToken cancellationToken)
@@ -67,6 +72,7 @@ public class ScrapingCoordinator
                 SitemapIndexUrl = definition.SitemapIndexUrl,
                 SupportsCatalogDiscovery = definition.SupportsCatalogDiscovery,
                 CatalogNotes = definition.CatalogNotes,
+                CatalogCoverage = _catalogDiscoveryService.GetCoverageStatus(definition.Retailer),
                 SupportedModes = definition.SupportedModes
             })
             .ToArray();

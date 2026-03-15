@@ -55,7 +55,7 @@ public class RetailerRegistry
                 SupportedModes = defaultModes,
                 ProductSitemapMarkers = Array.Empty<string>(),
                 SupportsCatalogDiscovery = true,
-                CatalogNotes = "Amazon IT non espone product sitemap pubbliche complete. Il backend puo creare automaticamente una prima snapshot locale crawlando le pagine bestseller pubbliche e salvando sitemap XML locali, ma la copertura resta best-effort e non dimostra esaustivita dell'intero marketplace."
+                CatalogNotes = "Amazon IT non espone product sitemap pubbliche complete. Il backend puo costruire una snapshot locale ampia tramite crawl pubblico strutturato e salvarla per categorie, ma la copertura totale al 100% e garantibile solo quando viene configurata una snapshot autorevole completa."
             }
         };
     }

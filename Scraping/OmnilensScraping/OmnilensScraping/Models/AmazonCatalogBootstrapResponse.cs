@@ -12,6 +12,9 @@ public class AmazonCatalogBootstrapResponse
     public int EnqueuedPages { get; set; }
     public int GeneratedSitemaps { get; set; }
     public int DiscoveredProducts { get; set; }
+    public int PersistedProducts { get; set; }
+    public int DiscoveredCategories { get; set; }
+    public int? RequestedTake { get; set; }
     public long DurationMs { get; set; }
     public IReadOnlyCollection<string> SitemapFiles { get; set; } = Array.Empty<string>();
     public IReadOnlyCollection<string> Warnings { get; set; } = Array.Empty<string>();

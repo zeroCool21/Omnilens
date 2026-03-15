@@ -35,6 +35,12 @@ public class CatalogDiscoveryService
         return ResolveSource(retailer).CountProductSourcesAsync(_retailerRegistry.Get(retailer), cancellationToken);
     }
 
+    public CatalogCoverageStatus GetCoverageStatus(RetailerType retailer)
+    {
+        var definition = _retailerRegistry.Get(retailer);
+        return ResolveSource(retailer).DescribeCoverage(definition);
+    }
+
     private ICatalogUrlSource ResolveSource(RetailerType retailer)
     {
         var definition = _retailerRegistry.Get(retailer);

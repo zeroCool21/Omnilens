@@ -41,6 +41,11 @@ public class RetailerParsedProductsResponse
     public int AppliedMaxConcurrency { get; set; }
 
     /// <summary>
+    /// Stato di copertura del catalogo usato per il prelievo degli URL.
+    /// </summary>
+    public CatalogCoverageStatus CatalogCoverage { get; set; } = new();
+
+    /// <summary>
     /// Durata totale dell'operazione in millisecondi.
     /// </summary>
     public long ElapsedMs { get; set; }

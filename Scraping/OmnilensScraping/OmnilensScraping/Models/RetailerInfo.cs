@@ -36,6 +36,11 @@ public class RetailerInfo
     public string? CatalogNotes { get; set; }
 
     /// <summary>
+    /// Stato di copertura del catalogo per il retailer.
+    /// </summary>
+    public CatalogCoverageStatus CatalogCoverage { get; set; } = new();
+
+    /// <summary>
     /// Modalita di scraping supportate dal retailer.
     /// </summary>
     public IReadOnlyCollection<ScrapingMode> SupportedModes { get; set; } = Array.Empty<ScrapingMode>();

@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualBasic.FileIO;
+using OmnilensScraping.Models;
 
 namespace OmnilensScraping.Scraping;
 
@@ -25,6 +26,27 @@ public class AmazonCatalogUrlSource : ICatalogUrlSource
     public bool CanHandle(RetailerDefinition definition)
     {
         return definition.Retailer == Models.RetailerType.AmazonIt;
+    }
+
+    public CatalogCoverageStatus DescribeCoverage(RetailerDefinition definition)
+    {
+        if (ResolveAuthoritativeCatalogFiles().Count > 0)
+        {
+            return new CatalogCoverageStatus
+            {
+                SourceKind = "AuthoritativeSnapshot",
+                IsGuaranteedComplete = true,
+                Notes = "Catalogo Amazon letto da una snapshot locale dichiarata autorevole e completa."
+            };
+        }
+
+        return new CatalogCoverageStatus
+        {
+            SourceKind = "PublicCrawlSnapshot",
+            IsGuaranteedComplete = false,
+            Notes = definition.CatalogNotes ??
+                    "Catalogo Amazon ottenuto da crawl pubblico e snapshot locale: copertura ampia ma non garantita completa."
+        };
     }
 
     public async Task<IReadOnlyCollection<string>> GetSampleProductUrlsAsync(
@@ -53,37 +75,19 @@ public class AmazonCatalogUrlSource : ICatalogUrlSource
         RetailerDefinition definition,
         CancellationToken cancellationToken)
     {
-        var files = ResolveCatalogFiles();
-        if (files.Count == 0 && _options.AutoBootstrapIfMissing)
-        {
-            await _bootstrapService.BootstrapAsync(force: false, cancellationToken);
-            files = ResolveCatalogFiles();
-        }
-
-        return files.Count;
+        var resolved = await ResolveCatalogFilesAsync(definition, cancellationToken);
+        return resolved.Files.Count;
     }
 
     private async Task<IReadOnlyCollection<string>> LoadCatalogUrlsAsync(
         RetailerDefinition definition,
         CancellationToken cancellationToken)
     {
-        var files = ResolveCatalogFiles();
-        if (files.Count == 0 && _options.AutoBootstrapIfMissing)
-        {
-            await _bootstrapService.BootstrapAsync(force: false, cancellationToken);
-            files = ResolveCatalogFiles();
-        }
-
-        if (files.Count == 0)
-        {
-            throw new NotSupportedException(
-                definition.CatalogNotes ??
-                "Amazon IT non ha ancora una snapshot catalogo locale valida.");
-        }
+        var resolved = await ResolveCatalogFilesAsync(definition, cancellationToken);
 
         var collectedUrls = new ConcurrentBag<string>();
         await Parallel.ForEachAsync(
-            files,
+            resolved.Files,
             new ParallelOptions
             {
                 MaxDegreeOfParallelism = Math.Max(1, _options.CatalogFileReadConcurrency),
@@ -112,11 +116,57 @@ public class AmazonCatalogUrlSource : ICatalogUrlSource
         return urls;
     }
 
-    private IReadOnlyCollection<string> ResolveCatalogFiles()
+    private async Task<ResolvedAmazonCatalogFiles> ResolveCatalogFilesAsync(
+        RetailerDefinition definition,
+        CancellationToken cancellationToken)
+    {
+        var authoritativeFiles = ResolveAuthoritativeCatalogFiles();
+        if (authoritativeFiles.Count > 0)
+        {
+            return new ResolvedAmazonCatalogFiles(authoritativeFiles, DescribeCoverage(definition));
+        }
+
+        var publicFiles = ResolvePublicCatalogFiles();
+        if (publicFiles.Count == 0 && _options.AutoBootstrapIfMissing)
+        {
+            await _bootstrapService.BootstrapAsync(force: false, cancellationToken: cancellationToken);
+            publicFiles = ResolvePublicCatalogFiles();
+        }
+
+        if (publicFiles.Count == 0)
+        {
+            throw new NotSupportedException(
+                definition.CatalogNotes ??
+                "Amazon IT non ha ancora una snapshot catalogo locale valida.");
+        }
+
+        return new ResolvedAmazonCatalogFiles(publicFiles, DescribeCoverage(definition));
+    }
+
+    private IReadOnlyCollection<string> ResolveAuthoritativeCatalogFiles()
+    {
+        return ResolveCatalogFiles(
+            _options.AuthoritativeFilePaths,
+            ResolveAuthoritativeCatalogDirectory(),
+            _options.AuthoritativeFilePatterns);
+    }
+
+    private IReadOnlyCollection<string> ResolvePublicCatalogFiles()
+    {
+        return ResolveCatalogFiles(
+            _options.FilePaths,
+            ResolvePublicCatalogDirectory(),
+            _options.FilePatterns);
+    }
+
+    private static IReadOnlyCollection<string> ResolveCatalogFiles(
+        IEnumerable<string> filePaths,
+        string directory,
+        IEnumerable<string> filePatterns)
     {
         var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var filePath in _options.FilePaths.Where(path => !string.IsNullOrWhiteSpace(path)))
+        foreach (var filePath in filePaths.Where(path => !string.IsNullOrWhiteSpace(path)))
         {
             var fullPath = Path.GetFullPath(filePath);
             if (File.Exists(fullPath))
@@ -125,17 +175,13 @@ public class AmazonCatalogUrlSource : ICatalogUrlSource
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(_options.CatalogDirectory))
+        if (Directory.Exists(directory))
         {
-            var directory = Path.GetFullPath(_options.CatalogDirectory);
-            if (Directory.Exists(directory))
+            foreach (var pattern in filePatterns.Where(pattern => !string.IsNullOrWhiteSpace(pattern)))
             {
-                foreach (var pattern in _options.FilePatterns.Where(pattern => !string.IsNullOrWhiteSpace(pattern)))
+                foreach (var filePath in Directory.EnumerateFiles(directory, pattern, System.IO.SearchOption.AllDirectories))
                 {
-                    foreach (var filePath in Directory.EnumerateFiles(directory, pattern, System.IO.SearchOption.AllDirectories))
-                    {
-                        results.Add(filePath);
-                    }
+                    results.Add(filePath);
                 }
             }
         }
@@ -143,6 +189,22 @@ public class AmazonCatalogUrlSource : ICatalogUrlSource
         return results
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private string ResolveAuthoritativeCatalogDirectory()
+    {
+        return string.IsNullOrWhiteSpace(_options.AuthoritativeCatalogDirectory)
+            ? string.Empty
+            : Path.GetFullPath(_options.AuthoritativeCatalogDirectory);
+    }
+
+    private string ResolvePublicCatalogDirectory()
+    {
+        var configuredDirectory = string.IsNullOrWhiteSpace(_options.CatalogDirectory)
+            ? _bootstrapService.ResolveOutputDirectory()
+            : _options.CatalogDirectory;
+
+        return Path.GetFullPath(configuredDirectory);
     }
 
     private async Task CollectUrlsFromFileAsync(
@@ -366,4 +428,8 @@ public class AmazonCatalogUrlSource : ICatalogUrlSource
     {
         return $"https://www.amazon.it/dp/{asin.ToUpperInvariant()}";
     }
+
+    private sealed record ResolvedAmazonCatalogFiles(
+        IReadOnlyCollection<string> Files,
+        CatalogCoverageStatus Coverage);
 }
