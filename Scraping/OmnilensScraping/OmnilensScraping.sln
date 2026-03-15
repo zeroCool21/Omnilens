@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.12.35728.132
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OmnilensScraping", "OmnilensScraping\OmnilensScraping.csproj", "{71CA009F-17F6-4EEC-BD4F-4F9C33A7FA9D}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{64200E44-0528-4BCF-AC2D-779DEDDC21A7}"
+	ProjectSection(SolutionItems) = preProject
+		NuGet.config = NuGet.config
+		readme.md = readme.md
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{71CA009F-17F6-4EEC-BD4F-4F9C33A7FA9D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{71CA009F-17F6-4EEC-BD4F-4F9C33A7FA9D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{71CA009F-17F6-4EEC-BD4F-4F9C33A7FA9D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{71CA009F-17F6-4EEC-BD4F-4F9C33A7FA9D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E14FBF8B-4836-4D5E-95EF-887CB34297B2}
+	EndGlobalSection
+EndGlobal
