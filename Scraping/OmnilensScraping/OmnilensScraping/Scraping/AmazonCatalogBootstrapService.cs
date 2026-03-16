@@ -154,7 +154,7 @@ public class AmazonCatalogBootstrapService
         _logger = logger;
     }
 
-    public async Task<AmazonCatalogBootstrapResponse?> EnsurePublicSnapshotAsync(
+    public async Task<RetailerCatalogBootstrapResponse?> EnsurePublicSnapshotAsync(
         bool force = false,
         int take = 0,
         CancellationToken cancellationToken = default)
@@ -184,7 +184,7 @@ public class AmazonCatalogBootstrapService
         return DateTime.UtcNow - File.GetLastWriteTimeUtc(markerPath) < TimeSpan.FromMinutes(staleAfter);
     }
 
-    public async Task<AmazonCatalogBootstrapResponse> BootstrapAsync(
+    public async Task<RetailerCatalogBootstrapResponse> BootstrapAsync(
         bool force,
         int take = 0,
         CancellationToken cancellationToken = default)
@@ -339,9 +339,10 @@ public class AmazonCatalogBootstrapService
 
             stopwatch.Stop();
 
-            return new AmazonCatalogBootstrapResponse
+            return new RetailerCatalogBootstrapResponse
             {
                 Success = persistedProductUrls.Length > 0,
+                Retailer = RetailerType.AmazonIt,
                 OutputDirectory = outputDirectory,
                 CrawledPages = crawledPages.Count,
                 EnqueuedPages = scheduledPages.Count,

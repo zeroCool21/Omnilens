@@ -10,6 +10,11 @@ Accept: application/json
 
 ###
 
+GET {{OmnilensScraping_HostAddress}}/api/scraping/retailers/pharmacies
+Accept: application/json
+
+###
+
 GET {{OmnilensScraping_HostAddress}}/api/scraping/samples/Unieuro?take=3
 Accept: application/json
 
@@ -43,6 +48,21 @@ Accept: application/json
 ###
 
 GET {{OmnilensScraping_HostAddress}}/api/scraping/catalog/AmazonIt/count
+Accept: application/json
+
+###
+
+GET {{OmnilensScraping_HostAddress}}/api/scraping/catalog/Redcare/count
+Accept: application/json
+
+###
+
+GET {{OmnilensScraping_HostAddress}}/api/scraping/catalog/Farmacie1000/parsed?take=2&mode=Auto&maxConcurrency=0
+Accept: application/json
+
+###
+
+POST {{OmnilensScraping_HostAddress}}/api/scraping/catalog/TopFarmacia/bootstrap?force=true&take=250
 Accept: application/json
 
 ###

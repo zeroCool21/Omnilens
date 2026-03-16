@@ -8,6 +8,7 @@ public class CatalogRefreshHostedService : BackgroundService
     private readonly RetailerRegistry _retailerRegistry;
     private readonly SitemapCatalogSnapshotService _sitemapSnapshotService;
     private readonly AmazonCatalogBootstrapService _amazonBootstrapService;
+    private readonly RetailerCatalogBootstrapService _retailerBootstrapService;
     private readonly AmazonCatalogOptions _amazonOptions;
     private readonly CatalogRefreshOptions _refreshOptions;
     private readonly ILogger<CatalogRefreshHostedService> _logger;
@@ -16,6 +17,7 @@ public class CatalogRefreshHostedService : BackgroundService
         RetailerRegistry retailerRegistry,
         SitemapCatalogSnapshotService sitemapSnapshotService,
         AmazonCatalogBootstrapService amazonBootstrapService,
+        RetailerCatalogBootstrapService retailerBootstrapService,
         IOptions<AmazonCatalogOptions> amazonOptions,
         IOptions<CatalogRefreshOptions> refreshOptions,
         ILogger<CatalogRefreshHostedService> logger)
@@ -23,6 +25,7 @@ public class CatalogRefreshHostedService : BackgroundService
         _retailerRegistry = retailerRegistry;
         _sitemapSnapshotService = sitemapSnapshotService;
         _amazonBootstrapService = amazonBootstrapService;
+        _retailerBootstrapService = retailerBootstrapService;
         _amazonOptions = amazonOptions.Value;
         _refreshOptions = refreshOptions.Value;
         _logger = logger;
@@ -68,8 +71,12 @@ public class CatalogRefreshHostedService : BackgroundService
                         await RefreshAmazonCatalogAsync(cancellationToken);
                         break;
                     default:
-                        if (!string.IsNullOrWhiteSpace(definition.SitemapIndexUrl) &&
-                            definition.ProductSitemapMarkers.Count > 0)
+                        if (_retailerBootstrapService.CanBootstrap(definition))
+                        {
+                            await RefreshBootstrapCatalogAsync(definition, cancellationToken);
+                        }
+                        else if (!string.IsNullOrWhiteSpace(definition.SitemapIndexUrl) &&
+                                 definition.ProductSitemapMarkers.Count > 0)
                         {
                             var sourceCount = await _sitemapSnapshotService.GetOrRefreshProductSourceCountAsync(definition, cancellationToken);
                             _logger.LogInformation(
@@ -109,6 +116,25 @@ public class CatalogRefreshHostedService : BackgroundService
 
         _logger.LogInformation(
             "Bootstrap Amazon IT completato. Prodotti persistiti: {PersistedProducts}, pagine crawlate: {CrawledPages}, sitemap generate: {GeneratedSitemaps}",
+            response.PersistedProducts,
+            response.CrawledPages,
+            response.GeneratedSitemaps);
+    }
+
+    private async Task RefreshBootstrapCatalogAsync(
+        RetailerDefinition definition,
+        CancellationToken cancellationToken)
+    {
+        var response = await _retailerBootstrapService.EnsurePublicSnapshotAsync(definition, force: false, cancellationToken: cancellationToken);
+        if (response is null)
+        {
+            _logger.LogInformation("Snapshot pubblica {Retailer} ancora fresca. Nessun bootstrap necessario.", definition.DisplayName);
+            return;
+        }
+
+        _logger.LogInformation(
+            "Bootstrap {Retailer} completato. Prodotti persistiti: {PersistedProducts}, pagine crawlate: {CrawledPages}, sitemap generate: {GeneratedSitemaps}",
+            definition.DisplayName,
             response.PersistedProducts,
             response.CrawledPages,
             response.GeneratedSitemaps);

@@ -1,12 +1,12 @@
 namespace OmnilensScraping.Models;
 
 /// <summary>
-/// Esito della generazione automatica della prima snapshot catalogo Amazon IT.
+/// Esito della generazione automatica di una snapshot catalogo locale.
 /// </summary>
-public class AmazonCatalogBootstrapResponse
+public class RetailerCatalogBootstrapResponse
 {
     public bool Success { get; set; }
-    public RetailerType Retailer { get; set; } = RetailerType.AmazonIt;
+    public RetailerType Retailer { get; set; }
     public string OutputDirectory { get; set; } = string.Empty;
     public int CrawledPages { get; set; }
     public int EnqueuedPages { get; set; }

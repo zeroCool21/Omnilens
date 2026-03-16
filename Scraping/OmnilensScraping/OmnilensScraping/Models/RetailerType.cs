@@ -8,5 +8,15 @@ public enum RetailerType
     Unieuro,
     MediaWorld,
     Euronics,
-    AmazonIt
+    AmazonIt,
+    Redcare,
+    DrMax,
+    Farmasave,
+    FarmaciaLoreto,
+    EFarma,
+    Farmacie1000,
+    TopFarmacia,
+    TuttoFarma,
+    FarmaIt,
+    BenuFarma
 }

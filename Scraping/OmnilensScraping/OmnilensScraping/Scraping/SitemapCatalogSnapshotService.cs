@@ -80,7 +80,7 @@ public class SitemapCatalogSnapshotService
                 async (sitemapUrl, ct) =>
                 {
                     var content = await ReadSitemapAsync(new Uri(sitemapUrl), ct);
-                    foreach (var location in ParseLocations(content))
+                    foreach (var location in FilterProductLocations(ParseLocations(content), definition))
                     {
                         collectedUrls.Add(location);
                     }
@@ -272,6 +272,20 @@ public class SitemapCatalogSnapshotService
             .Select(node => node.Value.Trim())
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .ToArray();
+    }
+
+    private static IEnumerable<string> FilterProductLocations(
+        IReadOnlyCollection<string> locations,
+        RetailerDefinition definition)
+    {
+        if (definition.ProductUrlMarkers.Count == 0)
+        {
+            return locations;
+        }
+
+        return locations.Where(location =>
+            definition.ProductUrlMarkers.Any(marker =>
+                location.Contains(marker, StringComparison.OrdinalIgnoreCase)));
     }
 
     private sealed class SitemapSnapshotMetadata

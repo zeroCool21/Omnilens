@@ -16,6 +16,11 @@ public class RetailerInfo
     public string DisplayName { get; set; } = string.Empty;
 
     /// <summary>
+    /// Categoria merceologica principale del retailer.
+    /// </summary>
+    public RetailerCategory Category { get; set; }
+
+    /// <summary>
     /// Host gestiti dal backend per il retailer.
     /// </summary>
     public IReadOnlyCollection<string> Hosts { get; set; } = Array.Empty<string>();

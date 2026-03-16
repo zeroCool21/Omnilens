@@ -16,17 +16,23 @@ public class ScrapingController : ControllerBase
     private readonly ParallelScrapingService _parallelScrapingService;
     private readonly CatalogDiscoveryService _catalogDiscoveryService;
     private readonly AmazonCatalogBootstrapService _amazonCatalogBootstrapService;
+    private readonly RetailerCatalogBootstrapService _retailerCatalogBootstrapService;
+    private readonly RetailerRegistry _retailerRegistry;
 
     public ScrapingController(
         ScrapingCoordinator scrapingCoordinator,
         ParallelScrapingService parallelScrapingService,
         CatalogDiscoveryService catalogDiscoveryService,
-        AmazonCatalogBootstrapService amazonCatalogBootstrapService)
+        AmazonCatalogBootstrapService amazonCatalogBootstrapService,
+        RetailerCatalogBootstrapService retailerCatalogBootstrapService,
+        RetailerRegistry retailerRegistry)
     {
         _scrapingCoordinator = scrapingCoordinator;
         _parallelScrapingService = parallelScrapingService;
         _catalogDiscoveryService = catalogDiscoveryService;
         _amazonCatalogBootstrapService = amazonCatalogBootstrapService;
+        _retailerCatalogBootstrapService = retailerCatalogBootstrapService;
+        _retailerRegistry = retailerRegistry;
     }
 
     /// <summary>
@@ -47,6 +53,7 @@ public class ScrapingController : ControllerBase
             endpoints = new[]
             {
                 "GET /api/scraping/retailers",
+                "GET /api/scraping/retailers/pharmacies",
                 "GET /api/scraping/samples/{retailer}",
                 "GET /api/scraping/catalog/{retailer}/count",
                 "GET /api/scraping/catalog/{retailer}/parsed",
@@ -72,9 +79,22 @@ public class ScrapingController : ControllerBase
     }
 
     /// <summary>
+    /// Elenca solo i retailer farmacia supportati dal backend.
+    /// </summary>
+    /// <remarks>
+    /// Utile per lavorare sul vertical farmacie senza dover filtrare l'elenco completo dei retailer.
+    /// </remarks>
+    /// <response code="200">Elenco dei retailer farmacia registrati.</response>
+    [HttpGet("retailers/pharmacies")]
+    public ActionResult<IReadOnlyCollection<RetailerInfo>> GetPharmacyRetailers()
+    {
+        return Ok(_scrapingCoordinator.GetRetailers(RetailerCategory.Pharmacy));
+    }
+
+    /// <summary>
     /// Restituisce alcuni URL prodotto presi dal sitemap del retailer.
     /// </summary>
-    /// <param name="retailer">Retailer da interrogare: Unieuro, MediaWorld, Euronics o AmazonIt.</param>
+    /// <param name="retailer">Retailer da interrogare.</param>
     /// <param name="take">Numero di URL campione da restituire.</param>
     /// <param name="cancellationToken">Token per annullare la richiesta lato server.</param>
     /// <remarks>
@@ -364,36 +384,45 @@ public class ScrapingController : ControllerBase
     /// <summary>
     /// Genera una prima snapshot locale del catalogo retailer quando non esiste un sitemap pubblico completo.
     /// </summary>
-    /// <param name="retailer">Retailer per cui eseguire il bootstrap. Attualmente supportato solo AmazonIt.</param>
+    /// <param name="retailer">Retailer per cui eseguire il bootstrap. Supporta AmazonIt e i retailer che richiedono crawl pubblico per costruire una snapshot locale.</param>
     /// <param name="force">Se true rigenera i file bootstrap locali rimuovendo quelli precedenti.</param>
     /// <param name="take">Numero massimo di prodotti da salvare nella snapshot. Se 0 non applica limiti.</param>
     /// <param name="cancellationToken">Token per annullare la richiesta lato server.</param>
     /// <remarks>
     /// Per Amazon IT il bootstrap esplora il grafo pubblico di discovery page del sito, non solo le classifiche bestseller,
     /// e salva sitemap XML locali organizzati per categorie riusabili dagli endpoint catalogo.
+    /// Per retailer come TopFarmacia o TuttoFarma il bootstrap costruisce una snapshot locale best-effort a partire dalle discovery page pubbliche.
     /// La copertura totale al 100% resta garantibile solo quando il backend legge una snapshot autorevole completa.
     /// </remarks>
     /// <response code="200">Bootstrap completato.</response>
     /// <response code="400">Retailer non supportato o richiesta non valida.</response>
     [HttpPost("catalog/{retailer}/bootstrap")]
-    public async Task<ActionResult<AmazonCatalogBootstrapResponse>> BootstrapCatalog(
+    public async Task<ActionResult<RetailerCatalogBootstrapResponse>> BootstrapCatalog(
         RetailerType retailer,
         [FromQuery] bool force = false,
         [FromQuery] int take = 0,
         CancellationToken cancellationToken = default)
     {
-        if (retailer != RetailerType.AmazonIt)
-        {
-            return BadRequest("Il bootstrap automatico del catalogo e attualmente disponibile solo per AmazonIt.");
-        }
-
         if (take < 0)
         {
             return BadRequest("Il parametro take deve essere maggiore o uguale a 0.");
         }
 
-        var response = await _amazonCatalogBootstrapService.BootstrapAsync(force, take, cancellationToken);
-        return Ok(response);
+        var definition = _retailerRegistry.Get(retailer);
+
+        if (retailer == RetailerType.AmazonIt)
+        {
+            var amazonResponse = await _amazonCatalogBootstrapService.BootstrapAsync(force, take, cancellationToken);
+            return Ok(amazonResponse);
+        }
+
+        if (_retailerCatalogBootstrapService.CanBootstrap(definition))
+        {
+            var bootstrapResponse = await _retailerCatalogBootstrapService.BootstrapAsync(definition, force, take, cancellationToken);
+            return Ok(bootstrapResponse);
+        }
+
+        return BadRequest("Il bootstrap automatico del catalogo e disponibile solo per i retailer che non espongono un product sitemap pubblico completo, ad esempio AmazonIt, TopFarmacia e TuttoFarma.");
     }
 
     /// <summary>

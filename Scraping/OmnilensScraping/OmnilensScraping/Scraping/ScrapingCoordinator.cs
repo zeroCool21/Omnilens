@@ -63,11 +63,23 @@ public class ScrapingCoordinator
 
     public IReadOnlyCollection<RetailerInfo> GetRetailers()
     {
+        return BuildRetailers(null);
+    }
+
+    public IReadOnlyCollection<RetailerInfo> GetRetailers(RetailerCategory category)
+    {
+        return BuildRetailers(category);
+    }
+
+    private IReadOnlyCollection<RetailerInfo> BuildRetailers(RetailerCategory? category)
+    {
         return _retailerRegistry.GetDefinitions()
+            .Where(definition => !category.HasValue || definition.Category == category.Value)
             .Select(definition => new RetailerInfo
             {
                 Retailer = definition.Retailer,
                 DisplayName = definition.DisplayName,
+                Category = definition.Category,
                 Hosts = definition.Hosts,
                 SitemapIndexUrl = definition.SitemapIndexUrl,
                 SupportsCatalogDiscovery = definition.SupportsCatalogDiscovery,
