@@ -1,21 +1,14 @@
-using System.IO.Compression;
-using System.Xml.Linq;
-using Microsoft.Extensions.Options;
 using OmnilensScraping.Models;
 
 namespace OmnilensScraping.Scraping;
 
 public class SitemapCatalogUrlSource : ICatalogUrlSource
 {
-    private readonly PageContentService _pageContentService;
-    private readonly ScrapingOptions _options;
+    private readonly SitemapCatalogSnapshotService _snapshotService;
 
-    public SitemapCatalogUrlSource(
-        PageContentService pageContentService,
-        IOptions<ScrapingOptions> options)
+    public SitemapCatalogUrlSource(SitemapCatalogSnapshotService snapshotService)
     {
-        _pageContentService = pageContentService;
-        _options = options.Value;
+        _snapshotService = snapshotService;
     }
 
     public bool CanHandle(RetailerDefinition definition)
@@ -30,7 +23,7 @@ public class SitemapCatalogUrlSource : ICatalogUrlSource
         {
             SourceKind = "PublicSitemap",
             IsGuaranteedComplete = true,
-            Notes = "Catalogo letto dai product sitemap pubblici del retailer."
+            Notes = "Catalogo letto dai product sitemap pubblici del retailer e mantenuto in snapshot locale aggiornata."
         };
     }
 
@@ -44,90 +37,22 @@ public class SitemapCatalogUrlSource : ICatalogUrlSource
             return Array.Empty<string>();
         }
 
-        var productSitemaps = await GetProductSitemapUrlsAsync(definition, cancellationToken);
-        var results = new List<string>();
-
-        foreach (var sitemapUrl in productSitemaps)
-        {
-            var content = await ReadSitemapAsync(new Uri(sitemapUrl), cancellationToken);
-            foreach (var location in ParseLocations(content))
-            {
-                results.Add(location);
-                if (results.Count >= take)
-                {
-                    return results;
-                }
-            }
-        }
-
-        return results;
+        return (await _snapshotService.GetOrRefreshSnapshotUrlsAsync(definition, cancellationToken))
+            .Take(take)
+            .ToArray();
     }
 
     public async Task<int> CountProductUrlsAsync(
         RetailerDefinition definition,
         CancellationToken cancellationToken)
     {
-        var productSitemaps = await GetProductSitemapUrlsAsync(definition, cancellationToken);
-        var total = 0;
-
-        await Parallel.ForEachAsync(
-            productSitemaps,
-            new ParallelOptions
-            {
-                MaxDegreeOfParallelism = Math.Max(1, _options.MaxSitemapConcurrency),
-                CancellationToken = cancellationToken
-            },
-            async (sitemapUrl, ct) =>
-            {
-                var content = await ReadSitemapAsync(new Uri(sitemapUrl), ct);
-                var count = ParseLocations(content).Count;
-                Interlocked.Add(ref total, count);
-            });
-
-        return total;
+        return (await _snapshotService.GetOrRefreshSnapshotUrlsAsync(definition, cancellationToken)).Count;
     }
 
-    public async Task<int> CountProductSourcesAsync(
+    public Task<int> CountProductSourcesAsync(
         RetailerDefinition definition,
         CancellationToken cancellationToken)
     {
-        var productSitemaps = await GetProductSitemapUrlsAsync(definition, cancellationToken);
-        return productSitemaps.Count;
-    }
-
-    private async Task<IReadOnlyCollection<string>> GetProductSitemapUrlsAsync(
-        RetailerDefinition definition,
-        CancellationToken cancellationToken)
-    {
-        var sitemapIndex = await _pageContentService.GetStringAsync(new Uri(definition.SitemapIndexUrl), cancellationToken);
-
-        return ParseLocations(sitemapIndex)
-            .Where(location => definition.ProductSitemapMarkers.Any(marker =>
-                location.Contains(marker, StringComparison.OrdinalIgnoreCase)))
-            .ToArray();
-    }
-
-    private async Task<string> ReadSitemapAsync(Uri url, CancellationToken cancellationToken)
-    {
-        if (url.AbsolutePath.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
-        {
-            var bytes = await _pageContentService.GetBytesAsync(url, cancellationToken);
-            using var input = new MemoryStream(bytes);
-            using var gzip = new GZipStream(input, CompressionMode.Decompress);
-            using var reader = new StreamReader(gzip);
-            return await reader.ReadToEndAsync().WaitAsync(cancellationToken);
-        }
-
-        return await _pageContentService.GetStringAsync(url, cancellationToken);
-    }
-
-    private static IReadOnlyCollection<string> ParseLocations(string xml)
-    {
-        var document = XDocument.Parse(xml);
-        return document.Descendants()
-            .Where(node => node.Name.LocalName == "loc")
-            .Select(node => node.Value.Trim())
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .ToArray();
+        return _snapshotService.GetOrRefreshProductSourceCountAsync(definition, cancellationToken);
     }
 }

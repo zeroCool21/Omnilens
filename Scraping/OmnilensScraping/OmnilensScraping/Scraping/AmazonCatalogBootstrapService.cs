@@ -2,9 +2,11 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using HtmlAgilityPack;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OmnilensScraping.Models;
 
@@ -12,6 +14,7 @@ namespace OmnilensScraping.Scraping;
 
 public class AmazonCatalogBootstrapService
 {
+    private const string MetadataFileName = "amazon-bootstrap.metadata.json";
     private static readonly Regex AmazonProductUrlRegex = new("(?:/dp/|/gp/product/)(?<asin>[A-Z0-9]{10})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex SlashRegex = new("[\\\\/]+", RegexOptions.Compiled);
     private static readonly Regex SlugNoiseRegex = new("[^a-z0-9]+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -135,13 +138,50 @@ public class AmazonCatalogBootstrapService
 
     private readonly PageContentService _pageContentService;
     private readonly AmazonCatalogOptions _options;
+    private readonly CatalogRefreshOptions _refreshOptions;
+    private readonly ILogger<AmazonCatalogBootstrapService> _logger;
+    private readonly SemaphoreSlim _bootstrapGate = new(1, 1);
 
     public AmazonCatalogBootstrapService(
         PageContentService pageContentService,
-        IOptions<AmazonCatalogOptions> options)
+        IOptions<AmazonCatalogOptions> options,
+        IOptions<CatalogRefreshOptions> refreshOptions,
+        ILogger<AmazonCatalogBootstrapService> logger)
     {
         _pageContentService = pageContentService;
         _options = options.Value;
+        _refreshOptions = refreshOptions.Value;
+        _logger = logger;
+    }
+
+    public async Task<AmazonCatalogBootstrapResponse?> EnsurePublicSnapshotAsync(
+        bool force = false,
+        int take = 0,
+        CancellationToken cancellationToken = default)
+    {
+        if (!force && HasPublicSnapshot() && IsPublicSnapshotFresh())
+        {
+            return null;
+        }
+
+        return await BootstrapAsync(force, take, cancellationToken);
+    }
+
+    public bool HasPublicSnapshot()
+    {
+        return ResolvePersistedSitemapFiles().Count > 0;
+    }
+
+    public bool IsPublicSnapshotFresh()
+    {
+        var markerPath = ResolveFreshnessMarkerPath();
+        if (string.IsNullOrWhiteSpace(markerPath) || !File.Exists(markerPath))
+        {
+            return false;
+        }
+
+        var staleAfter = Math.Max(1, _refreshOptions.SnapshotStaleAfterMinutes);
+        return DateTime.UtcNow - File.GetLastWriteTimeUtc(markerPath) < TimeSpan.FromMinutes(staleAfter);
     }
 
     public async Task<AmazonCatalogBootstrapResponse> BootstrapAsync(
@@ -149,149 +189,176 @@ public class AmazonCatalogBootstrapService
         int take = 0,
         CancellationToken cancellationToken = default)
     {
-        var stopwatch = Stopwatch.StartNew();
-        var requestedTake = take > 0 ? take : 0;
-        var warnings = new ConcurrentQueue<string>();
-        var crawledPages = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
-        var productUrls = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
-        var categoryMap = new ConcurrentDictionary<string, AmazonCategoryContext>(StringComparer.OrdinalIgnoreCase);
-        var productCategories = new ConcurrentDictionary<string, ConcurrentDictionary<string, byte>>(StringComparer.OrdinalIgnoreCase);
-        var scheduledPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var queue = new Queue<AmazonCatalogPage>();
-
-        foreach (var seed in GetSeedPages())
+        await _bootstrapGate.WaitAsync(cancellationToken);
+        try
         {
-            var seedKey = NormalizePageKey(seed.PageUri);
-            if (scheduledPages.Add(seedKey))
+            var stopwatch = Stopwatch.StartNew();
+            var requestedTake = take > 0 ? take : 0;
+            var warnings = new ConcurrentQueue<string>();
+            var crawledPages = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+            var productUrls = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+            var categoryMap = new ConcurrentDictionary<string, AmazonCategoryContext>(StringComparer.OrdinalIgnoreCase);
+            var productCategories = new ConcurrentDictionary<string, ConcurrentDictionary<string, byte>>(StringComparer.OrdinalIgnoreCase);
+            var scheduledPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var queue = new Queue<AmazonCatalogPage>();
+
+            foreach (var seed in GetSeedPages())
             {
-                queue.Enqueue(seed);
-            }
-        }
-
-        categoryMap.TryAdd(AmazonCategoryContext.Uncategorized.Key, AmazonCategoryContext.Uncategorized);
-
-        var outputDirectory = ResolveOutputDirectory();
-        Directory.CreateDirectory(outputDirectory);
-
-        while (queue.Count > 0 && crawledPages.Count < _options.BootstrapMaxPages)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var remainingCapacity = _options.BootstrapMaxPages - crawledPages.Count;
-            var batchSize = Math.Min(
-                Math.Max(1, _options.BootstrapMaxConcurrency),
-                Math.Min(queue.Count, remainingCapacity));
-
-            var batch = new List<AmazonCatalogPage>(batchSize);
-            while (batch.Count < batchSize && queue.Count > 0)
-            {
-                batch.Add(queue.Dequeue());
-            }
-
-            if (batch.Count == 0)
-            {
-                break;
-            }
-
-            var discoveredPages = new ConcurrentDictionary<string, AmazonCatalogPage>(StringComparer.OrdinalIgnoreCase);
-
-            await Parallel.ForEachAsync(
-                batch,
-                new ParallelOptions
+                var seedKey = NormalizePageKey(seed.PageUri);
+                if (scheduledPages.Add(seedKey))
                 {
-                    MaxDegreeOfParallelism = Math.Max(1, _options.BootstrapMaxConcurrency),
-                    CancellationToken = cancellationToken
-                },
-                async (page, ct) =>
-                {
-                    var pageKey = NormalizePageKey(page.PageUri);
-                    crawledPages.TryAdd(pageKey, 0);
+                    queue.Enqueue(seed);
+                }
+            }
 
-                    try
-                    {
-                        var html = await _pageContentService.GetHtmlAsync(page.PageUri, _options.BootstrapUseBrowser, ct);
-                        var document = HtmlHelpers.Load(html);
-                        var resolvedCategory = ResolvePageCategory(document, page.PageUri, page.Category);
-                        categoryMap.TryAdd(resolvedCategory.Key, resolvedCategory);
+            categoryMap.TryAdd(AmazonCategoryContext.Uncategorized.Key, AmazonCategoryContext.Uncategorized);
 
-                        foreach (var productUrl in ExtractProductUrls(document, page.PageUri))
-                        {
-                            productUrls.TryAdd(productUrl, 0);
-                            AddProductCategory(productCategories, productUrl, resolvedCategory);
-                        }
+            var outputDirectory = ResolveOutputDirectory();
+            Directory.CreateDirectory(outputDirectory);
 
-                        foreach (var nextPage in ExtractDiscoveryPages(document, page.PageUri, resolvedCategory))
-                        {
-                            var nextKey = NormalizePageKey(nextPage.PageUri);
-                            discoveredPages.AddOrUpdate(
-                                nextKey,
-                                static (_, candidate) => candidate,
-                                static (_, existing, candidate) => ChooseMoreSpecificPage(existing, candidate),
-                                nextPage);
-                        }
-                    }
-                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception exception)
-                    {
-                        warnings.Enqueue($"{page.PageUri}: {exception.Message}");
-                    }
-                });
-
-            foreach (var discoveredPage in discoveredPages.OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase))
+            while (queue.Count > 0 && crawledPages.Count < _options.BootstrapMaxPages)
             {
-                if (scheduledPages.Count >= _options.BootstrapMaxPages)
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var remainingCapacity = _options.BootstrapMaxPages - crawledPages.Count;
+                var batchSize = Math.Min(
+                    Math.Max(1, _options.BootstrapMaxConcurrency),
+                    Math.Min(queue.Count, remainingCapacity));
+
+                var batch = new List<AmazonCatalogPage>(batchSize);
+                while (batch.Count < batchSize && queue.Count > 0)
+                {
+                    batch.Add(queue.Dequeue());
+                }
+
+                if (batch.Count == 0)
                 {
                     break;
                 }
 
-                if (scheduledPages.Add(discoveredPage.Key))
+                var discoveredPages = new ConcurrentDictionary<string, AmazonCatalogPage>(StringComparer.OrdinalIgnoreCase);
+
+                await Parallel.ForEachAsync(
+                    batch,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = Math.Max(1, _options.BootstrapMaxConcurrency),
+                        CancellationToken = cancellationToken
+                    },
+                    async (page, ct) =>
+                    {
+                        var pageKey = NormalizePageKey(page.PageUri);
+                        crawledPages.TryAdd(pageKey, 0);
+
+                        try
+                        {
+                            var scanResult = await ScanPageWithRetryAsync(page, ct);
+                            categoryMap.TryAdd(scanResult.Category.Key, scanResult.Category);
+
+                            foreach (var productUrl in scanResult.ProductUrls)
+                            {
+                                productUrls.TryAdd(productUrl, 0);
+                                AddProductCategory(productCategories, productUrl, scanResult.Category);
+                            }
+
+                            foreach (var nextPage in scanResult.DiscoveryPages)
+                            {
+                                var nextKey = NormalizePageKey(nextPage.PageUri);
+                                discoveredPages.AddOrUpdate(
+                                    nextKey,
+                                    static (_, candidate) => candidate,
+                                    static (_, existing, candidate) => ChooseMoreSpecificPage(existing, candidate),
+                                    nextPage);
+                            }
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception exception)
+                        {
+                            warnings.Enqueue($"{page.PageUri}: {exception.Message}");
+                        }
+                    });
+
+                foreach (var discoveredPage in discoveredPages.OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase))
                 {
-                    queue.Enqueue(discoveredPage.Value);
+                    if (scheduledPages.Count >= _options.BootstrapMaxPages)
+                    {
+                        break;
+                    }
+
+                    if (scheduledPages.Add(discoveredPage.Key))
+                    {
+                        queue.Enqueue(discoveredPage.Value);
+                    }
+                }
+
+                if (requestedTake > 0 && productUrls.Count >= requestedTake)
+                {
+                    warnings.Enqueue($"Raggiunto il limite take={requestedTake}. La snapshot verra salvata con al massimo {requestedTake} prodotti.");
+                    break;
                 }
             }
 
-            if (requestedTake > 0 && productUrls.Count >= requestedTake)
+            if (queue.Count > 0)
             {
-                warnings.Enqueue($"Raggiunto il limite take={requestedTake}. La snapshot verra salvata con al massimo {requestedTake} prodotti.");
-                break;
+                warnings.Enqueue($"Bootstrap interrotto al limite di {_options.BootstrapMaxPages} pagine. Aumenta AmazonCatalog.BootstrapMaxPages se vuoi esplorare piu a fondo.");
             }
+
+            var persistedProductUrls = productUrls.Keys
+                .OrderBy(url => url, StringComparer.OrdinalIgnoreCase)
+                .Take(requestedTake > 0 ? requestedTake : int.MaxValue)
+                .ToArray();
+
+            var categoryBuckets = BuildCategoryBuckets(persistedProductUrls, productCategories, categoryMap);
+            var sitemapFiles = persistedProductUrls.Length > 0
+                ? PersistCategorySitemaps(
+                    outputDirectory,
+                    categoryBuckets,
+                    _options.BootstrapFilePrefix,
+                    new AmazonBootstrapSnapshotMetadata
+                    {
+                        RequestedForceRefresh = force,
+                        RequestedTake = requestedTake > 0 ? requestedTake : null,
+                        CrawledPages = crawledPages.Count,
+                        EnqueuedPages = scheduledPages.Count,
+                        DiscoveredProducts = productUrls.Count,
+                        PersistedProducts = persistedProductUrls.Length,
+                        DiscoveredCategories = categoryBuckets.Count(bucket => !bucket.Category.IsUncategorized),
+                        DurationMs = stopwatch.ElapsedMilliseconds
+                    })
+                : Array.Empty<string>();
+
+            if (persistedProductUrls.Length == 0)
+            {
+                warnings.Enqueue(HasPublicSnapshot()
+                    ? "Il bootstrap non ha prodotto una snapshot valida. La snapshot Amazon precedente e stata mantenuta."
+                    : "Il bootstrap non ha prodotto una snapshot valida.");
+            }
+
+            stopwatch.Stop();
+
+            return new AmazonCatalogBootstrapResponse
+            {
+                Success = persistedProductUrls.Length > 0,
+                OutputDirectory = outputDirectory,
+                CrawledPages = crawledPages.Count,
+                EnqueuedPages = scheduledPages.Count,
+                GeneratedSitemaps = sitemapFiles.Count,
+                DiscoveredProducts = productUrls.Count,
+                PersistedProducts = persistedProductUrls.Length,
+                DiscoveredCategories = categoryBuckets.Count(bucket => !bucket.Category.IsUncategorized),
+                RequestedTake = requestedTake > 0 ? requestedTake : null,
+                DurationMs = stopwatch.ElapsedMilliseconds,
+                SitemapFiles = sitemapFiles,
+                Warnings = warnings.ToArray()
+            };
         }
-
-        if (queue.Count > 0)
+        finally
         {
-            warnings.Enqueue($"Bootstrap interrotto al limite di {_options.BootstrapMaxPages} pagine. Aumenta AmazonCatalog.BootstrapMaxPages se vuoi esplorare piu a fondo.");
+            _bootstrapGate.Release();
         }
-
-        var persistedProductUrls = productUrls.Keys
-            .OrderBy(url => url, StringComparer.OrdinalIgnoreCase)
-            .Take(requestedTake > 0 ? requestedTake : int.MaxValue)
-            .ToArray();
-
-        var categoryBuckets = BuildCategoryBuckets(persistedProductUrls, productCategories, categoryMap);
-        var sitemapFiles = force || persistedProductUrls.Length > 0
-            ? PersistCategorySitemaps(outputDirectory, categoryBuckets, _options.BootstrapFilePrefix)
-            : Array.Empty<string>();
-
-        stopwatch.Stop();
-
-        return new AmazonCatalogBootstrapResponse
-        {
-            Success = persistedProductUrls.Length > 0,
-            OutputDirectory = outputDirectory,
-            CrawledPages = crawledPages.Count,
-            EnqueuedPages = scheduledPages.Count,
-            GeneratedSitemaps = sitemapFiles.Count,
-            DiscoveredProducts = productUrls.Count,
-            PersistedProducts = persistedProductUrls.Length,
-            DiscoveredCategories = categoryBuckets.Count(bucket => !bucket.Category.IsUncategorized),
-            RequestedTake = requestedTake > 0 ? requestedTake : null,
-            DurationMs = stopwatch.ElapsedMilliseconds,
-            SitemapFiles = sitemapFiles,
-            Warnings = warnings.ToArray()
-        };
     }
 
     public string ResolveOutputDirectory()
@@ -301,6 +368,136 @@ public class AmazonCatalogBootstrapService
             : _options.CatalogDirectory;
 
         return Path.GetFullPath(configured);
+    }
+
+    private IReadOnlyCollection<string> ResolvePersistedSitemapFiles()
+    {
+        var outputDirectory = ResolveOutputDirectory();
+        if (!Directory.Exists(outputDirectory))
+        {
+            return Array.Empty<string>();
+        }
+
+        return Directory.EnumerateFiles(outputDirectory, $"{_options.BootstrapFilePrefix}_*.xml", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private string? ResolveFreshnessMarkerPath()
+    {
+        var metadataPath = Path.Combine(ResolveOutputDirectory(), MetadataFileName);
+        if (File.Exists(metadataPath))
+        {
+            return metadataPath;
+        }
+
+        return ResolvePersistedSitemapFiles()
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .FirstOrDefault();
+    }
+
+    private async Task<AmazonPageScanResult> ScanPageWithRetryAsync(
+        AmazonCatalogPage page,
+        CancellationToken cancellationToken)
+    {
+        Exception? lastError = null;
+        var maxAttempts = Math.Max(1, _options.BootstrapMaxRetryAttempts);
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await DelayBeforeRequestAsync(cancellationToken);
+
+            try
+            {
+                var useBrowser = _options.BootstrapUseBrowser || attempt == maxAttempts;
+                var html = await _pageContentService.GetHtmlAsync(page.PageUri, useBrowser, cancellationToken);
+                if (LooksLikeAmazonChallenge(html))
+                {
+                    throw new AmazonBootstrapRetryableException("Amazon ha restituito una challenge o captcha.");
+                }
+
+                var document = HtmlHelpers.Load(html);
+                var resolvedCategory = ResolvePageCategory(document, page.PageUri, page.Category);
+                var productUrls = ExtractProductUrls(document, page.PageUri);
+                var discoveryPages = ExtractDiscoveryPages(document, page.PageUri, resolvedCategory);
+
+                if (productUrls.Count == 0 && discoveryPages.Count == 0)
+                {
+                    throw new AmazonBootstrapRetryableException("Pagina discovery vuota o parsata in modo incompleto.");
+                }
+
+                return new AmazonPageScanResult(resolvedCategory, productUrls, discoveryPages);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (IsRetryable(exception) && attempt < maxAttempts)
+            {
+                lastError = exception;
+                _logger.LogDebug(exception, "Retry Amazon bootstrap {Attempt}/{MaxAttempts} su {Url}", attempt, maxAttempts, page.PageUri);
+                await DelayForRetryAsync(attempt, cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                lastError = exception;
+                break;
+            }
+        }
+
+        throw lastError ?? new InvalidOperationException($"Impossibile leggere la discovery page {page.PageUri}.");
+    }
+
+    private async Task DelayBeforeRequestAsync(CancellationToken cancellationToken)
+    {
+        var minDelay = Math.Max(0, _options.BootstrapRequestMinDelayMs);
+        var maxDelay = Math.Max(minDelay, _options.BootstrapRequestMaxDelayMs);
+        if (maxDelay <= 0)
+        {
+            return;
+        }
+
+        var delay = Random.Shared.Next(minDelay, maxDelay + 1);
+        if (delay > 0)
+        {
+            await Task.Delay(delay, cancellationToken);
+        }
+    }
+
+    private async Task DelayForRetryAsync(int attempt, CancellationToken cancellationToken)
+    {
+        var baseDelay = Math.Max(0, _options.BootstrapRetryBaseDelayMs);
+        var jitterMax = Math.Max(0, _options.BootstrapRetryJitterMaxMs);
+        var exponentialFactor = Math.Pow(2, Math.Max(0, attempt - 1));
+        var delay = (int)Math.Min(int.MaxValue, (baseDelay * exponentialFactor) + Random.Shared.Next(0, jitterMax + 1));
+
+        if (delay > 0)
+        {
+            await Task.Delay(delay, cancellationToken);
+        }
+    }
+
+    private static bool LooksLikeAmazonChallenge(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return true;
+        }
+
+        var normalized = html.ToLowerInvariant();
+        return normalized.Contains("captcha", StringComparison.Ordinal) ||
+               normalized.Contains("not a robot", StringComparison.Ordinal) ||
+               normalized.Contains("robot check", StringComparison.Ordinal) ||
+               normalized.Contains("automated access", StringComparison.Ordinal) ||
+               normalized.Contains("traffico insolito", StringComparison.Ordinal) ||
+               normalized.Contains("sorry, we just need to make sure", StringComparison.Ordinal) ||
+               normalized.Contains("inserisci i caratteri", StringComparison.Ordinal);
+    }
+
+    private static bool IsRetryable(Exception exception)
+    {
+        return exception is HttpRequestException or TimeoutException or AmazonBootstrapRetryableException;
     }
 
     private IReadOnlyCollection<AmazonCatalogPage> GetSeedPages()
@@ -397,7 +594,8 @@ public class AmazonCatalogBootstrapService
     private static IReadOnlyCollection<string> PersistCategorySitemaps(
         string outputDirectory,
         IReadOnlyCollection<AmazonCategoryBucket> categoryBuckets,
-        string filePrefix)
+        string filePrefix,
+        AmazonBootstrapSnapshotMetadata metadata)
     {
         var parentDirectory = Directory.GetParent(outputDirectory)?.FullName ?? outputDirectory;
         var stagingDirectory = Path.Combine(parentDirectory, $".{Path.GetFileName(outputDirectory)}-staging-{Guid.NewGuid():N}");
@@ -406,6 +604,7 @@ public class AmazonCatalogBootstrapService
         try
         {
             var stagedFiles = WriteCategorySitemaps(stagingDirectory, categoryBuckets, filePrefix);
+            WriteBootstrapMetadata(stagingDirectory, metadata);
             return ReplaceExistingSnapshot(outputDirectory, stagingDirectory, stagedFiles, filePrefix);
         }
         finally
@@ -428,10 +627,16 @@ public class AmazonCatalogBootstrapService
             File.Delete(existingFile);
         }
 
+        var metadataPath = Path.Combine(outputDirectory, MetadataFileName);
+        if (File.Exists(metadataPath))
+        {
+            File.Delete(metadataPath);
+        }
+
         RemoveEmptyDirectories(outputDirectory);
 
         var persistedFiles = new List<string>(stagedFiles.Count);
-        foreach (var stagedFile in stagedFiles)
+        foreach (var stagedFile in Directory.EnumerateFiles(stagingDirectory, "*", SearchOption.AllDirectories))
         {
             var relativePath = Path.GetRelativePath(stagingDirectory, stagedFile);
             var destinationPath = Path.GetFullPath(Path.Combine(outputDirectory, relativePath));
@@ -442,7 +647,10 @@ public class AmazonCatalogBootstrapService
             }
 
             File.Move(stagedFile, destinationPath, overwrite: true);
-            persistedFiles.Add(destinationPath);
+            if (destinationPath.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+            {
+                persistedFiles.Add(destinationPath);
+            }
         }
 
         RemoveEmptyDirectories(outputDirectory);
@@ -501,6 +709,13 @@ public class AmazonCatalogBootstrapService
         }
 
         return files;
+    }
+
+    private static void WriteBootstrapMetadata(string outputDirectory, AmazonBootstrapSnapshotMetadata metadata)
+    {
+        metadata.RefreshedAtUtc = DateTimeOffset.UtcNow;
+        var metadataPath = Path.Combine(outputDirectory, MetadataFileName);
+        File.WriteAllText(metadataPath, JsonSerializer.Serialize(metadata));
     }
 
     private static string ResolveCategoryDirectory(string rootDirectory, AmazonCategoryContext category)
@@ -953,6 +1168,11 @@ public class AmazonCatalogBootstrapService
 
     private sealed record AmazonCatalogPage(Uri PageUri, AmazonCategoryContext Category);
 
+    private sealed record AmazonPageScanResult(
+        AmazonCategoryContext Category,
+        IReadOnlyCollection<string> ProductUrls,
+        IReadOnlyCollection<AmazonCatalogPage> DiscoveryPages);
+
     private sealed record AmazonCategoryBucket(AmazonCategoryContext Category, IReadOnlyCollection<string> Urls);
 
     private sealed record AmazonCategoryContext(string[] Segments)
@@ -964,5 +1184,26 @@ public class AmazonCatalogBootstrapService
         public string Key => IsUncategorized
             ? "_uncategorized"
             : string.Join("/", Segments.Select(ToSlug));
+    }
+
+    private sealed class AmazonBootstrapRetryableException : Exception
+    {
+        public AmazonBootstrapRetryableException(string message)
+            : base(message)
+        {
+        }
+    }
+
+    private sealed class AmazonBootstrapSnapshotMetadata
+    {
+        public DateTimeOffset RefreshedAtUtc { get; set; }
+        public bool RequestedForceRefresh { get; set; }
+        public int? RequestedTake { get; set; }
+        public int CrawledPages { get; set; }
+        public int EnqueuedPages { get; set; }
+        public int DiscoveredProducts { get; set; }
+        public int PersistedProducts { get; set; }
+        public int DiscoveredCategories { get; set; }
+        public long DurationMs { get; set; }
     }
 }

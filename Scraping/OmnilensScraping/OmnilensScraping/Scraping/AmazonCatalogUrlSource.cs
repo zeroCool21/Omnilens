@@ -127,9 +127,10 @@ public class AmazonCatalogUrlSource : ICatalogUrlSource
         }
 
         var publicFiles = ResolvePublicCatalogFiles();
-        if (publicFiles.Count == 0 && _options.AutoBootstrapIfMissing)
+        var snapshotIsStale = publicFiles.Count > 0 && !_bootstrapService.IsPublicSnapshotFresh();
+        if ((publicFiles.Count == 0 || snapshotIsStale) && _options.AutoBootstrapIfMissing)
         {
-            await _bootstrapService.BootstrapAsync(force: false, cancellationToken: cancellationToken);
+            await _bootstrapService.EnsurePublicSnapshotAsync(force: false, cancellationToken: cancellationToken);
             publicFiles = ResolvePublicCatalogFiles();
         }
 

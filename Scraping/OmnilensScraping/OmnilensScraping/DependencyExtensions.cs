@@ -9,6 +9,7 @@ public static class DependencyExtensions
     {
         services.Configure<ScrapingOptions>(configuration.GetSection("Scraping"));
         services.Configure<AmazonCatalogOptions>(configuration.GetSection("AmazonCatalog"));
+        services.Configure<CatalogRefreshOptions>(configuration.GetSection("CatalogRefresh"));
 
         services.AddHttpClient(PageContentService.ClientName, client =>
         {
@@ -25,11 +26,13 @@ public static class DependencyExtensions
         services.AddSingleton<RetailerRegistry>();
         services.AddSingleton<PageContentService>();
         services.AddSingleton<PlaywrightBrowserService>();
+        services.AddSingleton<SitemapCatalogSnapshotService>();
         services.AddSingleton<AmazonCatalogBootstrapService>();
         services.AddSingleton<ICatalogUrlSource, SitemapCatalogUrlSource>();
         services.AddSingleton<ICatalogUrlSource, AmazonCatalogUrlSource>();
         services.AddSingleton<CatalogDiscoveryService>();
         services.AddSingleton<ParallelScrapingService>();
+        services.AddHostedService<CatalogRefreshHostedService>();
 
         services.AddScoped<IRetailerScraper, UnieuroRetailerScraper>();
         services.AddScoped<IRetailerScraper, MediaWorldRetailerScraper>();
