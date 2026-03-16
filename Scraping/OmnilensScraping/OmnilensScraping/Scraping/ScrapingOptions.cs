@@ -6,6 +6,11 @@ public class ScrapingOptions
 
     public string UserAgent { get; set; } = DefaultUserAgent;
     public int BrowserTimeoutMs { get; set; } = 60000;
+    public bool BrowserHeadless { get; set; } = true;
+    public string BrowserChannel { get; set; } = "chrome";
+    public int BrowserViewportWidth { get; set; } = 1366;
+    public int BrowserViewportHeight { get; set; } = 768;
+    public int BrowserRenderDelayMs { get; set; } = 1200;
     public int MaxBatchConcurrency { get; set; } = Math.Min(32, Math.Max(8, Environment.ProcessorCount * 2));
     public int MaxHttpConcurrency { get; set; } = Math.Min(64, Math.Max(12, Environment.ProcessorCount * 4));
     public int MaxBrowserConcurrency { get; set; } = Math.Min(8, Math.Max(2, Environment.ProcessorCount / 2));

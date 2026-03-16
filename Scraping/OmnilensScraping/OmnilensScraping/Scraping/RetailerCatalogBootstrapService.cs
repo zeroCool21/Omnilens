@@ -150,6 +150,7 @@ public class RetailerCatalogBootstrapService
             var scheduledPages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var crawledPages = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
             var productUrls = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+            var stoppedForTakeLimit = false;
 
             foreach (var seed in definition.BootstrapSeedUrls)
             {
@@ -222,12 +223,13 @@ public class RetailerCatalogBootstrapService
 
                 if (requestedTake > 0 && productUrls.Count >= requestedTake)
                 {
+                    stoppedForTakeLimit = true;
                     warnings.Enqueue($"Raggiunto il limite take={requestedTake}. La snapshot verra salvata con al massimo {requestedTake} prodotti.");
                     break;
                 }
             }
 
-            if (queue.Count > 0)
+            if (!stoppedForTakeLimit && queue.Count > 0)
             {
                 warnings.Enqueue($"Bootstrap interrotto al limite di {ResolveMaxPages(definition)} pagine. Aumenta i limiti del bootstrap se vuoi esplorare piu a fondo.");
             }

@@ -133,16 +133,29 @@ public class RetailerRegistry
                 SupportedModes = defaultModes,
                 ProductSitemapMarkers = Array.Empty<string>(),
                 SupportsCatalogDiscovery = true,
-                CatalogNotes = "Top Farmacia non espone un product sitemap pubblico stabile da usare lato backend. Il catalogo viene costruito da bootstrap crawl pubblico con snapshot locale e richiede modalita Browser per limitare i blocchi.",
+                CatalogNotes = "Top Farmacia non espone un product sitemap pubblico stabile da usare lato backend. Il catalogo viene costruito da bootstrap crawl pubblico con snapshot locale e usa un browser persistente con seed category mirati per limitare i blocchi edge.",
                 BootstrapSeedUrls = new[]
                 {
-                    "https://www.topfarmacia.it/",
-                    "https://www.topfarmacia.it/sitemap"
+                    "https://www.topfarmacia.it/c-cosmetici-1",
+                    "https://www.topfarmacia.it/c-integratori-167",
+                    "https://www.topfarmacia.it/c-medicinali-103",
+                    "https://www.topfarmacia.it/c-omeopatia-84",
+                    "https://www.topfarmacia.it/c-igiene-265",
+                    "https://www.topfarmacia.it/c-cura-benessere-244",
+                    "https://www.topfarmacia.it/c-prima-infanzia-308",
+                    "https://www.topfarmacia.it/c-veterinaria-340",
+                    "https://www.topfarmacia.it/c-sanitaria-354",
+                    "https://www.topfarmacia.it/promozioni/special/piu-acquistati",
+                    "https://www.topfarmacia.it/nuovi-arrivi",
+                    "https://www.topfarmacia.it/brands"
                 },
                 BootstrapDiscoveryPathPrefixes = new[]
                 {
                     "/c-",
-                    "/sitemap"
+                    "/b-",
+                    "/brands",
+                    "/nuovi-arrivi",
+                    "/promozioni"
                 },
                 BootstrapExcludedPathPrefixes = DefaultBootstrapExcludedPrefixes,
                 BootstrapProductUrlMarkers = new[]
@@ -150,7 +163,7 @@ public class RetailerRegistry
                     "/p-"
                 },
                 BootstrapUseBrowser = true,
-                BootstrapMaxConcurrency = 2,
+                BootstrapMaxConcurrency = 1,
                 BootstrapMaxPages = 2500
             },
             [RetailerType.TuttoFarma] = new RetailerDefinition
