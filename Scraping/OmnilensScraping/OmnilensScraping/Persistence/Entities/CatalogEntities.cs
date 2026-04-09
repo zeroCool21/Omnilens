@@ -10,8 +10,16 @@ public class Source
     public string BaseUrl { get; set; } = string.Empty;
     public bool SupportsCatalogBootstrap { get; set; }
     public bool SupportsLiveScrape { get; set; } = true;
+    public bool SupportsApiCollection { get; set; }
+    public bool SupportsScrapingCollection { get; set; } = true;
+    public bool SupportsManualCollection { get; set; }
     public bool IsEnabled { get; set; } = true;
     public int PriorityScore { get; set; } = 50;
+    public decimal HealthScore { get; set; } = 100m;
+    public int ConsecutiveFailureCount { get; set; }
+    public DateTimeOffset? LastRunAtUtc { get; set; }
+    public DateTimeOffset? LastSuccessfulRunAtUtc { get; set; }
+    public DateTimeOffset? LastFailedRunAtUtc { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<SourceProduct> SourceProducts { get; set; } = new List<SourceProduct>();

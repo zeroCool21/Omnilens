@@ -13,6 +13,18 @@ public sealed class OmnilensDbContext : DbContext
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyMember> CompanyMembers => Set<CompanyMember>();
+    public DbSet<AppRole> Roles => Set<AppRole>();
+    public DbSet<AppPermission> Permissions => Set<AppPermission>();
+    public DbSet<UserRole> UserRoles => Set<UserRole>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+    public DbSet<UserRefreshToken> UserRefreshTokens => Set<UserRefreshToken>();
+    public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
+    public DbSet<UserProfileSettings> UserProfileSettings => Set<UserProfileSettings>();
+    public DbSet<ProductFamily> ProductFamilies => Set<ProductFamily>();
+    public DbSet<Plan> Plans => Set<Plan>();
+    public DbSet<Entitlement> Entitlements => Set<Entitlement>();
+    public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
+    public DbSet<UserSubscription> UserSubscriptions => Set<UserSubscription>();
     public DbSet<Source> Sources => Set<Source>();
     public DbSet<CanonicalProduct> CanonicalProducts => Set<CanonicalProduct>();
     public DbSet<CanonicalProductAttribute> CanonicalProductAttributes => Set<CanonicalProductAttribute>();
@@ -33,6 +45,7 @@ public sealed class OmnilensDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureIdentity(modelBuilder);
+        ConfigureSubscriptions(modelBuilder);
         ConfigureCatalog(modelBuilder);
         ConfigureTracking(modelBuilder);
         ConfigurePharmacy(modelBuilder);
@@ -50,6 +63,96 @@ public sealed class OmnilensDbContext : DbContext
             entity.Property(item => item.UserType).HasMaxLength(32).IsRequired();
             entity.Property(item => item.CountryCode).HasMaxLength(2);
             entity.HasIndex(item => item.Email).IsUnique();
+        });
+
+        modelBuilder.Entity<AppRole>(entity =>
+        {
+            entity.ToTable("roles");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Code).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.DisplayName).HasMaxLength(128).IsRequired();
+            entity.HasIndex(item => item.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<AppPermission>(entity =>
+        {
+            entity.ToTable("permissions");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Code).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.DisplayName).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Scope).HasMaxLength(64).IsRequired();
+            entity.HasIndex(item => item.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<UserRole>(entity =>
+        {
+            entity.ToTable("user_roles");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.UserId, item.RoleId }).IsUnique();
+            entity.HasOne(item => item.User)
+                .WithMany(item => item.UserRoles)
+                .HasForeignKey(item => item.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.Role)
+                .WithMany(item => item.UserRoles)
+                .HasForeignKey(item => item.RoleId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RolePermission>(entity =>
+        {
+            entity.ToTable("role_permissions");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.RoleId, item.PermissionId }).IsUnique();
+            entity.HasOne(item => item.Role)
+                .WithMany(item => item.RolePermissions)
+                .HasForeignKey(item => item.RoleId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.Permission)
+                .WithMany(item => item.RolePermissions)
+                .HasForeignKey(item => item.PermissionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserRefreshToken>(entity =>
+        {
+            entity.ToTable("user_refresh_tokens");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.TokenHash).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.UserAgent).HasMaxLength(512);
+            entity.Property(item => item.IpAddress).HasMaxLength(128);
+            entity.HasIndex(item => item.TokenHash).IsUnique();
+            entity.HasIndex(item => new { item.UserId, item.ExpiresAtUtc });
+            entity.HasOne(item => item.User)
+                .WithMany(item => item.RefreshTokens)
+                .HasForeignKey(item => item.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PasswordResetToken>(entity =>
+        {
+            entity.ToTable("password_reset_tokens");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.TokenHash).HasMaxLength(128).IsRequired();
+            entity.HasIndex(item => item.TokenHash).IsUnique();
+            entity.HasIndex(item => new { item.UserId, item.ExpiresAtUtc });
+            entity.HasOne(item => item.User)
+                .WithMany(item => item.PasswordResetTokens)
+                .HasForeignKey(item => item.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserProfileSettings>(entity =>
+        {
+            entity.ToTable("user_profile_settings");
+            entity.HasKey(item => item.UserId);
+            entity.Property(item => item.LanguageCode).HasMaxLength(8).IsRequired();
+            entity.Property(item => item.CountryCode).HasMaxLength(2).IsRequired();
+            entity.Property(item => item.SectorCode).HasMaxLength(64);
+            entity.HasOne(item => item.User)
+                .WithOne(item => item.ProfileSettings)
+                .HasForeignKey<UserProfileSettings>(item => item.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Company>(entity =>
@@ -77,6 +180,83 @@ public sealed class OmnilensDbContext : DbContext
         });
     }
 
+    private static void ConfigureSubscriptions(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ProductFamily>(entity =>
+        {
+            entity.ToTable("product_families");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Code).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.Name).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Audience).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.Description).HasMaxLength(512);
+            entity.HasIndex(item => item.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<Plan>(entity =>
+        {
+            entity.ToTable("plans");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Code).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.Name).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Audience).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.BillingPeriod).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(item => item.Price).HasPrecision(12, 2);
+            entity.Property(item => item.Description).HasMaxLength(512);
+            entity.HasIndex(item => item.Code).IsUnique();
+            entity.HasOne(item => item.ProductFamily)
+                .WithMany(item => item.Plans)
+                .HasForeignKey(item => item.ProductFamilyId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Entitlement>(entity =>
+        {
+            entity.ToTable("entitlements");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Code).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Name).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Category).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.ValueType).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.Description).HasMaxLength(512);
+            entity.HasIndex(item => item.Code).IsUnique();
+        });
+
+        modelBuilder.Entity<PlanEntitlement>(entity =>
+        {
+            entity.ToTable("plan_entitlements");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.StringValue).HasMaxLength(256);
+            entity.Property(item => item.NumericValue).HasPrecision(12, 2);
+            entity.HasIndex(item => new { item.PlanId, item.EntitlementId }).IsUnique();
+            entity.HasOne(item => item.Plan)
+                .WithMany(item => item.PlanEntitlements)
+                .HasForeignKey(item => item.PlanId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.Entitlement)
+                .WithMany(item => item.PlanEntitlements)
+                .HasForeignKey(item => item.EntitlementId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserSubscription>(entity =>
+        {
+            entity.ToTable("user_subscriptions");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Status).HasMaxLength(32).IsRequired();
+            entity.HasIndex(item => new { item.UserId, item.Status });
+            entity.HasOne(item => item.User)
+                .WithMany(item => item.Subscriptions)
+                .HasForeignKey(item => item.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.Plan)
+                .WithMany(item => item.UserSubscriptions)
+                .HasForeignKey(item => item.PlanId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
     private static void ConfigureCatalog(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Source>(entity =>
@@ -88,6 +268,7 @@ public sealed class OmnilensDbContext : DbContext
             entity.Property(item => item.Category).HasMaxLength(64).IsRequired();
             entity.Property(item => item.CountryCode).HasMaxLength(2).IsRequired();
             entity.Property(item => item.BaseUrl).HasMaxLength(2048).IsRequired();
+            entity.Property(item => item.HealthScore).HasPrecision(5, 2);
             entity.HasIndex(item => item.RetailerCode).IsUnique();
         });
 

@@ -16,7 +16,10 @@ public sealed class JwtTokenService
         _options = options.Value;
     }
 
-    public string CreateToken(AppUser user)
+    public string CreateToken(
+        AppUser user,
+        IReadOnlyCollection<string>? roles = null,
+        IReadOnlyCollection<string>? permissions = null)
     {
         var now = DateTime.UtcNow;
         var credentials = new SigningCredentials(
@@ -29,8 +32,23 @@ public sealed class JwtTokenService
             new(JwtRegisteredClaimNames.Email, user.Email),
             new(ClaimTypes.Name, user.DisplayName),
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new(ClaimTypes.Role, user.UserType)
+            new("user_type", user.UserType)
         };
+
+        foreach (var role in (roles ?? Array.Empty<string>())
+                     .Append(user.UserType)
+                     .Where(item => !string.IsNullOrWhiteSpace(item))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role));
+        }
+
+        foreach (var permission in (permissions ?? Array.Empty<string>())
+                     .Where(item => !string.IsNullOrWhiteSpace(item))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            claims.Add(new Claim("permission", permission));
+        }
 
         var token = new JwtSecurityToken(
             issuer: _options.Issuer,

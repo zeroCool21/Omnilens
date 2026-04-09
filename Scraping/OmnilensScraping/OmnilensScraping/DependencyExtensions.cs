@@ -45,7 +45,10 @@ public static class DependencyExtensions
                 };
             });
 
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+        {
+            options.AddPolicy("AdminOnly", policy => policy.RequireRole("ADMIN"));
+        });
 
         services.AddHttpClient(PageContentService.ClientName, client =>
         {
@@ -71,10 +74,12 @@ public static class DependencyExtensions
         services.AddSingleton<CatalogDiscoveryService>();
         services.AddSingleton<ParallelScrapingService>();
         services.AddSingleton<LocalPasswordHasher>();
+        services.AddSingleton<LocalOpaqueTokenService>();
         services.AddSingleton<JwtTokenService>();
         services.AddHostedService<LocalDatabaseInitializerHostedService>();
         services.AddHostedService<CatalogRefreshHostedService>();
         services.AddScoped<CatalogPersistenceService>();
+        services.AddScoped<SourceRunTrackingService>();
 
         services.AddScoped<IRetailerScraper, UnieuroRetailerScraper>();
         services.AddScoped<IRetailerScraper, MediaWorldRetailerScraper>();
