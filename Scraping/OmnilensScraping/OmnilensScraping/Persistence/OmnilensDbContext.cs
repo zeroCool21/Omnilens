@@ -13,6 +13,7 @@ public sealed class OmnilensDbContext : DbContext
     public DbSet<AppUser> Users => Set<AppUser>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyMember> CompanyMembers => Set<CompanyMember>();
+    public DbSet<CompanyInvite> CompanyInvites => Set<CompanyInvite>();
     public DbSet<AppRole> Roles => Set<AppRole>();
     public DbSet<AppPermission> Permissions => Set<AppPermission>();
     public DbSet<UserRole> UserRoles => Set<UserRole>();
@@ -177,6 +178,26 @@ public sealed class OmnilensDbContext : DbContext
                 .WithMany(item => item.CompanyMemberships)
                 .HasForeignKey(item => item.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CompanyInvite>(entity =>
+        {
+            entity.ToTable("company_invites");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Email).HasMaxLength(320).IsRequired();
+            entity.Property(item => item.Role).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.TokenHash).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Status).HasMaxLength(32).IsRequired();
+            entity.HasIndex(item => item.TokenHash).IsUnique();
+            entity.HasIndex(item => new { item.CompanyId, item.Email, item.Status });
+            entity.HasOne(item => item.Company)
+                .WithMany(item => item.Invites)
+                .HasForeignKey(item => item.CompanyId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.AcceptedByUser)
+                .WithMany()
+                .HasForeignKey(item => item.AcceptedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 

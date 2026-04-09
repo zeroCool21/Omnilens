@@ -32,6 +32,7 @@ public class Company
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<CompanyMember> Members { get; set; } = new List<CompanyMember>();
+    public ICollection<CompanyInvite> Invites { get; set; } = new List<CompanyInvite>();
 }
 
 public class CompanyMember
@@ -44,6 +45,24 @@ public class CompanyMember
 
     public Company Company { get; set; } = null!;
     public AppUser User { get; set; } = null!;
+}
+
+public class CompanyInvite
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid CompanyId { get; set; }
+    public string Email { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+    public string TokenHash { get; set; } = string.Empty;
+    public string Status { get; set; } = "Pending";
+    public Guid? AcceptedByUserId { get; set; }
+    public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+    public DateTimeOffset? AcceptedAtUtc { get; set; }
+    public DateTimeOffset? RevokedAtUtc { get; set; }
+
+    public Company Company { get; set; } = null!;
+    public AppUser? AcceptedByUser { get; set; }
 }
 
 public class AppRole
