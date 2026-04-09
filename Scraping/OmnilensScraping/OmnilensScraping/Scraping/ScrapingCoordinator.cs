@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using OmnilensScraping.Models;
+using OmnilensScraping.Persistence;
 
 namespace OmnilensScraping.Scraping;
 
@@ -8,15 +9,18 @@ public class ScrapingCoordinator
     private readonly IEnumerable<IRetailerScraper> _scrapers;
     private readonly RetailerRegistry _retailerRegistry;
     private readonly CatalogDiscoveryService _catalogDiscoveryService;
+    private readonly CatalogPersistenceService _catalogPersistenceService;
 
     public ScrapingCoordinator(
         IEnumerable<IRetailerScraper> scrapers,
         RetailerRegistry retailerRegistry,
-        CatalogDiscoveryService catalogDiscoveryService)
+        CatalogDiscoveryService catalogDiscoveryService,
+        CatalogPersistenceService catalogPersistenceService)
     {
         _scrapers = scrapers;
         _retailerRegistry = retailerRegistry;
         _catalogDiscoveryService = catalogDiscoveryService;
+        _catalogPersistenceService = catalogPersistenceService;
     }
 
     public async Task<ScrapeProductResponse> ScrapeAsync(ScrapeProductRequest request, CancellationToken cancellationToken)
@@ -47,6 +51,15 @@ public class ScrapingCoordinator
         result.Product.Retailer = definition.DisplayName;
         result.Product.Method = result.AppliedMode.ToString();
 
+        CatalogPersistenceResult? persistenceResult = null;
+        if (!string.IsNullOrWhiteSpace(result.Product.Title) || result.Product.Price.HasValue)
+        {
+            persistenceResult = await _catalogPersistenceService.PersistScrapeResultAsync(
+                definition,
+                result.Product,
+                cancellationToken);
+        }
+
         return new ScrapeProductResponse
         {
             Success = !string.IsNullOrWhiteSpace(result.Product.Title) || result.Product.Price.HasValue,
@@ -57,7 +70,10 @@ public class ScrapingCoordinator
             DurationMs = stopwatch.ElapsedMilliseconds,
             AppliedStrategies = result.AppliedStrategies,
             Warnings = result.Warnings,
-            Product = result.Product
+            Product = result.Product,
+            CanonicalProductId = persistenceResult?.CanonicalProductId,
+            SourceProductId = persistenceResult?.SourceProductId,
+            ProductOfferId = persistenceResult?.ProductOfferId
         };
     }
 

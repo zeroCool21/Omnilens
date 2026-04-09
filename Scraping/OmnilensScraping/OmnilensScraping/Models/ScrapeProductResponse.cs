@@ -49,4 +49,19 @@ public class ScrapeProductResponse
     /// Dati prodotto estratti dalla pagina, se presenti.
     /// </summary>
     public ProductData? Product { get; set; }
+
+    /// <summary>
+    /// Identificativo del prodotto canonico persistito localmente, se disponibile.
+    /// </summary>
+    public Guid? CanonicalProductId { get; set; }
+
+    /// <summary>
+    /// Identificativo del prodotto sorgente persistito localmente, se disponibile.
+    /// </summary>
+    public Guid? SourceProductId { get; set; }
+
+    /// <summary>
+    /// Identificativo dell'offerta persistita localmente, se disponibile.
+    /// </summary>
+    public Guid? ProductOfferId { get; set; }
 }

@@ -16,6 +16,8 @@ Architettura attiva
 - `ICatalogUrlSource`: strategy per l'origine degli URL catalogo.
 - `RetailerRegistry`: registry dei retailer supportati e delle capability.
 - `AmazonCatalogBootstrapService`: bootstrap automatico della prima snapshot Amazon IT.
+- `OmnilensDbContext`: persistence layer locale SQLite per l'MVP.
+- `LocalDatabaseInitializerHostedService`: creazione schema locale e sync dei retailer nel DB.
 
 Design pattern usati
 - `Strategy`: `IRetailerScraper` e `ICatalogUrlSource`.
@@ -42,3 +44,8 @@ Amazon IT
 - Non esiste una sitemap pubblica completa.
 - Il backend puo bootstrapparne una snapshot locale a partire dalle pagine pubbliche `bestsellers`.
 - La snapshot viene poi riusata dagli endpoint catalogo.
+
+Persistence locale MVP
+- DB locale SQLite: `OmnilensScraping/App_Data/omnilens-mvp.db`
+- Script schema iniziale: `OmnilensScraping/Persistence/Sql/001_initial_schema_sqlite.sql`
+- Lo schema puo essere creato automaticamente all'avvio se `Database:AutoCreateSchema=true`

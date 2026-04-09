@@ -1,16 +1,51 @@
 using System.Net;
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using OmnilensScraping.Auth;
+using OmnilensScraping.Persistence;
 using OmnilensScraping.Scraping;
 
 namespace OmnilensScraping;
 
 public static class DependencyExtensions
 {
-    public static IServiceCollection AddOmnilensScraping(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddOmnilensScraping(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         services.Configure<ScrapingOptions>(configuration.GetSection("Scraping"));
         services.Configure<AmazonCatalogOptions>(configuration.GetSection("AmazonCatalog"));
         services.Configure<CatalogBootstrapOptions>(configuration.GetSection("CatalogBootstrap"));
         services.Configure<CatalogRefreshOptions>(configuration.GetSection("CatalogRefresh"));
+        services.Configure<DatabaseOptions>(configuration.GetSection(DatabaseOptions.SectionName));
+        services.Configure<AuthOptions>(configuration.GetSection(AuthOptions.SectionName));
+
+        var databaseOptions = configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>() ?? new DatabaseOptions();
+        var sqliteConnectionString = BuildSqliteConnectionString(databaseOptions, environment);
+
+        services.AddDbContext<OmnilensDbContext>(options =>
+            options.UseSqlite(sqliteConnectionString));
+
+        var authOptions = configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
+        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(authOptions.SigningKey));
+
+        services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidateLifetime = true,
+                    ValidIssuer = authOptions.Issuer,
+                    ValidAudience = authOptions.Audience,
+                    IssuerSigningKey = signingKey,
+                    ClockSkew = TimeSpan.FromMinutes(1)
+                };
+            });
+
+        services.AddAuthorization();
 
         services.AddHttpClient(PageContentService.ClientName, client =>
         {
@@ -35,7 +70,11 @@ public static class DependencyExtensions
         services.AddSingleton<ICatalogUrlSource, AmazonCatalogUrlSource>();
         services.AddSingleton<CatalogDiscoveryService>();
         services.AddSingleton<ParallelScrapingService>();
+        services.AddSingleton<LocalPasswordHasher>();
+        services.AddSingleton<JwtTokenService>();
+        services.AddHostedService<LocalDatabaseInitializerHostedService>();
         services.AddHostedService<CatalogRefreshHostedService>();
+        services.AddScoped<CatalogPersistenceService>();
 
         services.AddScoped<IRetailerScraper, UnieuroRetailerScraper>();
         services.AddScoped<IRetailerScraper, MediaWorldRetailerScraper>();
@@ -94,5 +133,24 @@ public static class DependencyExtensions
         services.AddScoped<ScrapingCoordinator>();
 
         return services;
+    }
+
+    private static string BuildSqliteConnectionString(DatabaseOptions options, IHostEnvironment environment)
+    {
+        var filePath = string.IsNullOrWhiteSpace(options.FilePath)
+            ? DatabaseOptions.DefaultFilePath
+            : options.FilePath;
+
+        var absolutePath = Path.IsPathRooted(filePath)
+            ? filePath
+            : Path.Combine(environment.ContentRootPath, filePath);
+
+        var directory = Path.GetDirectoryName(absolutePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        return $"Data Source={absolutePath}";
     }
 }
