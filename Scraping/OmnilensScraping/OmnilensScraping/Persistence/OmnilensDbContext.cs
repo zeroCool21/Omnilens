@@ -42,6 +42,7 @@ public sealed class OmnilensDbContext : DbContext
     public DbSet<PharmacyProductFact> PharmacyProductFacts => Set<PharmacyProductFact>();
     public DbSet<PharmacyLocation> PharmacyLocations => Set<PharmacyLocation>();
     public DbSet<PharmacyReservation> PharmacyReservations => Set<PharmacyReservation>();
+    public DbSet<PharmacyReminder> PharmacyReminders => Set<PharmacyReminder>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -497,6 +498,7 @@ public sealed class OmnilensDbContext : DbContext
         {
             entity.ToTable("pharmacy_product_facts");
             entity.HasKey(item => item.Id);
+            entity.Property(item => item.CategoryClass).HasMaxLength(64).IsRequired();
             entity.Property(item => item.ActiveIngredient).HasMaxLength(200);
             entity.Property(item => item.DosageForm).HasMaxLength(128);
             entity.Property(item => item.StrengthText).HasMaxLength(128);
@@ -532,6 +534,7 @@ public sealed class OmnilensDbContext : DbContext
             entity.HasKey(item => item.Id);
             entity.Property(item => item.ReservationType).HasMaxLength(64).IsRequired();
             entity.Property(item => item.NreCode).HasMaxLength(64);
+            entity.Property(item => item.PickupCode).HasMaxLength(64);
             entity.Property(item => item.Status).HasMaxLength(64).IsRequired();
             entity.HasIndex(item => new { item.UserId, item.CreatedAtUtc });
             entity.HasOne(item => item.User)
@@ -542,8 +545,29 @@ public sealed class OmnilensDbContext : DbContext
                 .WithMany(item => item.PharmacyReservations)
                 .HasForeignKey(item => item.SourceId)
                 .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.PharmacyLocation)
+                .WithMany(item => item.Reservations)
+                .HasForeignKey(item => item.PharmacyLocationId)
+                .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(item => item.CanonicalProduct)
                 .WithMany(item => item.PharmacyReservations)
+                .HasForeignKey(item => item.CanonicalProductId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PharmacyReminder>(entity =>
+        {
+            entity.ToTable("pharmacy_reminders");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.ReminderType).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.Notes).HasMaxLength(512);
+            entity.HasIndex(item => new { item.UserId, item.IsActive, item.NextReminderAtUtc });
+            entity.HasOne(item => item.User)
+                .WithMany(item => item.PharmacyReminders)
+                .HasForeignKey(item => item.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(item => item.CanonicalProduct)
+                .WithMany(item => item.PharmacyReminders)
                 .HasForeignKey(item => item.CanonicalProductId)
                 .OnDelete(DeleteBehavior.Cascade);
         });

@@ -51,6 +51,7 @@ public class CanonicalProduct
     public ICollection<AlertRule> AlertRules { get; set; } = new List<AlertRule>();
     public ICollection<ClickEvent> ClickEvents { get; set; } = new List<ClickEvent>();
     public ICollection<PharmacyReservation> PharmacyReservations { get; set; } = new List<PharmacyReservation>();
+    public ICollection<PharmacyReminder> PharmacyReminders { get; set; } = new List<PharmacyReminder>();
     public PharmacyProductFact? PharmacyProductFact { get; set; }
 }
 

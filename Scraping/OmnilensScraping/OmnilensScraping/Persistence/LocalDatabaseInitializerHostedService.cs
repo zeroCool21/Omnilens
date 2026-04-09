@@ -1,5 +1,7 @@
 using System.Data;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using OmnilensScraping.Models;
@@ -10,6 +12,16 @@ namespace OmnilensScraping.Persistence;
 
 public sealed class LocalDatabaseInitializerHostedService : IHostedService
 {
+    private static readonly PharmacyLocationSeed[] PharmacyLocationSeeds =
+    {
+        new("Via Torino 15", "Milano", "MI", "20123", 45.4637m, 9.1866m),
+        new("Via del Corso 120", "Roma", "RM", "00186", 41.9026m, 12.4798m),
+        new("Via Toledo 220", "Napoli", "NA", "80132", 40.8380m, 14.2488m),
+        new("Via Maqueda 148", "Palermo", "PA", "90133", 38.1157m, 13.3613m),
+        new("Via Indipendenza 34", "Bologna", "BO", "40121", 44.4960m, 11.3426m),
+        new("Via Etnea 190", "Catania", "CT", "95131", 37.5109m, 15.0871m)
+    };
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptions<DatabaseOptions> _databaseOptions;
     private readonly RetailerRegistry _retailerRegistry;
@@ -47,6 +59,7 @@ public sealed class LocalDatabaseInitializerHostedService : IHostedService
         }
 
         await EnsureUserDefaultsAsync(dbContext, cancellationToken);
+        await SeedPharmacyVerticalAsync(dbContext, cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
@@ -427,6 +440,117 @@ public sealed class LocalDatabaseInitializerHostedService : IHostedService
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task SeedPharmacyVerticalAsync(OmnilensDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var locationsCreated = await SeedPharmacyLocationsAsync(dbContext, cancellationToken);
+        var factsCreated = await SeedPharmacyFactsAsync(dbContext, cancellationToken);
+
+        if (locationsCreated == 0 && factsCreated == 0)
+        {
+            return;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Bootstrap verticale farmacia completato. Sedi create: {Locations}. Schede prodotto create/aggiornate: {Facts}.",
+            locationsCreated,
+            factsCreated);
+    }
+
+    private static async Task<int> SeedPharmacyLocationsAsync(OmnilensDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var pharmacySources = await dbContext.Sources
+            .Where(item => item.Category == RetailerCategory.Pharmacy.ToString())
+            .OrderBy(item => item.RetailerCode)
+            .ToListAsync(cancellationToken);
+
+        var existingSourceIds = await dbContext.PharmacyLocations
+            .Select(item => item.SourceId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var created = 0;
+
+        for (var index = 0; index < pharmacySources.Count; index++)
+        {
+            var source = pharmacySources[index];
+            if (existingSourceIds.Contains(source.Id))
+            {
+                continue;
+            }
+
+            var seed = PharmacyLocationSeeds[index % PharmacyLocationSeeds.Length];
+            dbContext.PharmacyLocations.Add(new PharmacyLocation
+            {
+                SourceId = source.Id,
+                Name = $"{source.DisplayName} {seed.City}",
+                Address = seed.Address,
+                City = seed.City,
+                Province = seed.Province,
+                PostalCode = seed.PostalCode,
+                Latitude = seed.Latitude,
+                Longitude = seed.Longitude,
+                OpeningHoursJson = JsonSerializer.Serialize(new[]
+                {
+                    new { days = "Mon-Sat", hours = "08:30-20:00" },
+                    new { days = "Sun", hours = "09:00-13:00" }
+                })
+            });
+
+            created++;
+        }
+
+        return created;
+    }
+
+    private static async Task<int> SeedPharmacyFactsAsync(OmnilensDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var products = await dbContext.CanonicalProducts
+            .Include(item => item.Attributes)
+            .Include(item => item.PharmacyProductFact)
+            .Where(item => item.Vertical == RetailerCategory.Pharmacy.ToString())
+            .ToListAsync(cancellationToken);
+
+        var touched = 0;
+
+        foreach (var product in products)
+        {
+            var fact = product.PharmacyProductFact;
+            if (fact is null)
+            {
+                fact = new PharmacyProductFact
+                {
+                    CanonicalProductId = product.Id
+                };
+
+                dbContext.PharmacyProductFacts.Add(fact);
+            }
+
+            var attributes = product.Attributes
+                .ToDictionary(item => item.AttributeName, item => item.AttributeValue, StringComparer.OrdinalIgnoreCase);
+            var categoryClass = InferPharmacyCategoryClass(product);
+
+            if (string.IsNullOrWhiteSpace(fact.CategoryClass) ||
+                fact.CategoryClass.Equals("OTC", StringComparison.OrdinalIgnoreCase))
+            {
+                fact.CategoryClass = categoryClass;
+            }
+            fact.Manufacturer = string.IsNullOrWhiteSpace(fact.Manufacturer) ? product.Brand : fact.Manufacturer;
+            fact.ActiveIngredient ??= ExtractActiveIngredient(product, attributes);
+            fact.DosageForm ??= ExtractDosageForm(product);
+            fact.StrengthText ??= ExtractStrength(product);
+            fact.PackageSize ??= ExtractPackageSize(product);
+            fact.RequiresPrescription = InferRequiresPrescription(product);
+            fact.IsOtc = fact.CategoryClass.Equals("OTC", StringComparison.OrdinalIgnoreCase);
+            fact.IsSop = fact.CategoryClass.Equals("SOP", StringComparison.OrdinalIgnoreCase);
+
+            touched++;
+        }
+
+        return touched;
+    }
+
     private static string ResolveBaseUrl(RetailerDefinition definition)
     {
         if (Uri.TryCreate(definition.SitemapIndexUrl, UriKind.Absolute, out var sitemapUri))
@@ -637,4 +761,126 @@ public sealed class LocalDatabaseInitializerHostedService : IHostedService
             .Split('+', 2)[0]
             ?? "8.0.0";
     }
+
+    private static string InferPharmacyCategoryClass(CanonicalProduct product)
+    {
+        var text = BuildPharmacySearchText(product);
+
+        if (ContainsAny(text, "integratore", "vitamina", "omega", "magnesio", "probiot", "supplement"))
+        {
+            return "Integratore";
+        }
+
+        if (ContainsAny(text, "termometro", "misuratore", "dispositivo", "cerotti", "test ", "tampone", "mascherina"))
+        {
+            return "Dispositivo";
+        }
+
+        if (ContainsAny(text, "eau de", "profumo", "parfum", "cosmetic", "crema", "shampoo", "balsamo", "solare"))
+        {
+            return "Cosmetico";
+        }
+
+        if (ContainsAny(text, "collirio", "spray", "sciroppo", "gocce", "compresse", "capsule", "bustine"))
+        {
+            return "SOP";
+        }
+
+        return "OTC";
+    }
+
+    private static string? ExtractActiveIngredient(
+        CanonicalProduct product,
+        IReadOnlyDictionary<string, string> attributes)
+    {
+        foreach (var key in new[] { "Principio attivo", "Active ingredient", "Ingredienti", "Composizione" })
+        {
+            if (attributes.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        var description = product.Description;
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            var match = Regex.Match(
+                description,
+                @"(?:principio attivo|active ingredient)\s*[:\-]?\s*([A-Za-z0-9 ,\-/]{3,120})",
+                RegexOptions.IgnoreCase);
+
+            if (match.Success)
+            {
+                return match.Groups[1].Value.Trim(' ', ',', '.', ';', ':');
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractDosageForm(CanonicalProduct product)
+    {
+        var text = BuildPharmacySearchText(product);
+        var forms = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["eau de toilette"] = "Eau de Toilette",
+            ["eau de parfum"] = "Eau de Parfum",
+            ["compresse"] = "Compresse",
+            ["capsule"] = "Capsule",
+            ["spray"] = "Spray",
+            ["crema"] = "Crema",
+            ["gel"] = "Gel",
+            ["sciroppo"] = "Sciroppo",
+            ["gocce"] = "Gocce",
+            ["bustine"] = "Bustine"
+        };
+
+        return forms.FirstOrDefault(item => text.Contains(item.Key, StringComparison.OrdinalIgnoreCase)).Value;
+    }
+
+    private static string? ExtractStrength(CanonicalProduct product)
+    {
+        var text = BuildPharmacySearchText(product);
+        var match = Regex.Match(text, @"\b\d+\s?(?:mg|mcg|g)(?:\/\d+\s?(?:ml|g))?\b", RegexOptions.IgnoreCase);
+        return match.Success ? match.Value.Trim() : null;
+    }
+
+    private static string? ExtractPackageSize(CanonicalProduct product)
+    {
+        var text = BuildPharmacySearchText(product);
+        var match = Regex.Match(text, @"\b\d+\s?(?:ml|g|kg|capsule|compresse|bustine|fiale)\b", RegexOptions.IgnoreCase);
+        return match.Success ? match.Value.Trim() : null;
+    }
+
+    private static bool InferRequiresPrescription(CanonicalProduct product)
+    {
+        var text = BuildPharmacySearchText(product);
+        return ContainsAny(text, "ricetta", "prescrizione", "rx", "antibiot", "stupefacente");
+    }
+
+    private static string BuildPharmacySearchText(CanonicalProduct product)
+    {
+        return string.Join(' ',
+            new[]
+            {
+                product.Title,
+                product.Brand,
+                product.Description,
+                string.Join(' ', product.Attributes.Select(item => item.AttributeValue))
+            }.Where(item => !string.IsNullOrWhiteSpace(item)))
+            .Trim();
+    }
+
+    private static bool ContainsAny(string text, params string[] values)
+    {
+        return values.Any(value => text.Contains(value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed record PharmacyLocationSeed(
+        string Address,
+        string City,
+        string Province,
+        string PostalCode,
+        decimal Latitude,
+        decimal Longitude);
 }
