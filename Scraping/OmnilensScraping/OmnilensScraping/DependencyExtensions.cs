@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using OmnilensScraping.Auth;
 using OmnilensScraping.Persistence;
 using OmnilensScraping.Scraping;
+using OmnilensScraping.Tracking;
 
 namespace OmnilensScraping;
 
@@ -19,6 +20,8 @@ public static class DependencyExtensions
         services.Configure<CatalogRefreshOptions>(configuration.GetSection("CatalogRefresh"));
         services.Configure<DatabaseOptions>(configuration.GetSection(DatabaseOptions.SectionName));
         services.Configure<AuthOptions>(configuration.GetSection(AuthOptions.SectionName));
+        services.Configure<AlertingOptions>(configuration.GetSection("Alerting"));
+        services.Configure<ReferralOptions>(configuration.GetSection("Referral"));
 
         var databaseOptions = configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>() ?? new DatabaseOptions();
         var sqliteConnectionString = BuildSqliteConnectionString(databaseOptions, environment);
@@ -76,10 +79,14 @@ public static class DependencyExtensions
         services.AddSingleton<LocalPasswordHasher>();
         services.AddSingleton<LocalOpaqueTokenService>();
         services.AddSingleton<JwtTokenService>();
+        services.AddSingleton<IEmailSender, LocalLogEmailSender>();
+        services.AddSingleton<ReferralLinkTokenService>();
         services.AddHostedService<LocalDatabaseInitializerHostedService>();
         services.AddHostedService<CatalogRefreshHostedService>();
+        services.AddHostedService<AlertEvaluationHostedService>();
         services.AddScoped<CatalogPersistenceService>();
         services.AddScoped<SourceRunTrackingService>();
+        services.AddScoped<AlertEvaluationService>();
 
         services.AddScoped<IRetailerScraper, UnieuroRetailerScraper>();
         services.AddScoped<IRetailerScraper, MediaWorldRetailerScraper>();
